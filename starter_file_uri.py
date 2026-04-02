@@ -50,35 +50,91 @@ distance_zips = set(dist_matrix.index)
 def get_distance(zip1, zip2):
     return dist_matrix.loc[zip1, zip2]
 
+# unload time function
+def get_unload_time(cube):
+    return max(min_time, unload_rate * cube)/60   #hours
 
-# grab one example order
-sample_order = orders.iloc[0]
+def to_clock(hours):
+    h = int(hours)
+    m = int(round((hours - h) * 60))
+    if m == 60:
+        h += 1
+        m = 0
+    return f"{h:02d}:{m:02d}"
 
-print("\nSample order:")
-print(sample_order)
+# pick two orders from the same day
+same_day_orders = orders[orders["DayOfWeek"] == "Wed"].copy()
+print(same_day_orders.head())
 
-order_id = sample_order["ORDERID"]
-dest_zip = sample_order["TOZIP"]
-cube = sample_order["CUBE"]
-day = sample_order["DayOfWeek"]
+order1 = same_day_orders.iloc[0]
+order2 = same_day_orders.iloc[1]
+order3 = same_day_orders.iloc[3]
 
-print("\nParsed values:")
-print("Order ID:", order_id)
-print("Destination ZIP:", dest_zip)
-print("Cube:", cube)
-print("Day:", day)
+route_list = [order1 , order2, order3]
 
-# distance and drive time from depot to this order
-miles = get_distance(depot_zip, dest_zip)
-drive_time = miles / driving_speed
+current_zip = depot_zip
+total_miles = 0
+total_drive = 0
+total_unload = 0
+total_wait = 0
+total_cube = 0
 
-print("\nTravel info:")
-print("Miles from depot:", miles)
-print("Drive time (hours):", drive_time)
+first_zip = route_list[0]["TOZIP"]
+first_drive = get_distance(depot_zip, first_zip) / driving_speed
+current_time = window_open - first_drive
+print("Dispatch:", to_clock(current_time))
 
-# unload time for this order
-unload_time = max(min_time, unload_rate * cube)
+all_before_close = True
 
-print("\nService info:")
-print("Unload time (minutes):", unload_time)
-print("Unload time (hours):", unload_time / 60)
+for stop in route_list:
+    stop_zip = stop["TOZIP"]
+    cube = stop["CUBE"]
+
+    miles_leg = get_distance(current_zip, stop_zip)
+    drive = miles_leg / driving_speed
+    arrival = current_time + drive
+    service_start = max(arrival, window_open)
+    wait = max(0, window_open - arrival)
+    unload = get_unload_time(cube)
+    departure = service_start + unload
+    before_close = service_start <= window_close
+    all_before_close = all_before_close and before_close
+
+    print("Stop:", stop["ORDERID"])
+    print(" Arrive:", to_clock(arrival))
+    print(" Start service:", to_clock(service_start))
+    print(" Depart:", to_clock(departure))
+    print(" Before close:", before_close)
+
+    total_miles += miles_leg
+    total_drive += drive
+    total_wait += wait
+    total_unload += unload
+    total_cube += cube
+
+    current_time = departure
+    current_zip = stop_zip
+
+
+miles_back = get_distance(current_zip, depot_zip)
+drive_back = miles_back / driving_speed
+return_time = current_time + drive_back
+
+total_miles += miles_back
+total_drive += drive_back
+total_duty = total_drive + total_unload + total_wait
+
+print("\nReturn to depot:", to_clock(return_time))
+
+print("\nTotals")
+print("Total miles:", total_miles)
+print("Total drive hours:", total_drive)
+print("Total unload hours:", total_unload)
+print("Total wait hours:", total_wait)
+print("Total duty hours:", total_duty)
+print("Total cube:", total_cube)
+
+print("\nConstraints")
+print("Capacity feasible:", total_cube <= van_capacity)
+print("Window feasible:", all_before_close)
+print("DOT feasible:", total_drive <= max_driving and total_duty <= max_duty)
