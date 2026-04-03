@@ -62,79 +62,164 @@ def to_clock(hours):
         m = 0
     return f"{h:02d}:{m:02d}"
 
-# pick two orders from the same day
-same_day_orders = orders[orders["DayOfWeek"] == "Wed"].copy()
-print(same_day_orders.head())
+def evaluate_route(route_list, verbose=False):
+    current_zip = depot_zip
+    total_miles = 0
+    total_drive = 0
+    total_unload = 0
+    total_wait = 0
+    total_cube = 0
+    all_before_close = True
 
-order1 = same_day_orders.iloc[0]
-order2 = same_day_orders.iloc[1]
-order3 = same_day_orders.iloc[3]
+    first_zip = route_list[0]["TOZIP"]
+    first_drive = get_distance(depot_zip, first_zip) / driving_speed
+    current_time = window_open - first_drive
 
-route_list = [order1 , order2, order3]
+    if verbose:
+        print("Dispatch:", to_clock(current_time))
 
-current_zip = depot_zip
-total_miles = 0
-total_drive = 0
-total_unload = 0
-total_wait = 0
-total_cube = 0
+    for stop in route_list:
+        stop_zip = stop["TOZIP"]
+        cube = stop["CUBE"]
 
-first_zip = route_list[0]["TOZIP"]
-first_drive = get_distance(depot_zip, first_zip) / driving_speed
-current_time = window_open - first_drive
-print("Dispatch:", to_clock(current_time))
+        miles_leg = get_distance(current_zip, stop_zip)
+        drive = miles_leg / driving_speed
+        arrival = current_time + drive
+        service_start = max(arrival, window_open)
+        wait = max(0, window_open - arrival)
+        unload = get_unload_time(cube)
+        departure = service_start + unload
 
-all_before_close = True
+        before_close = service_start <= window_close
+        all_before_close = all_before_close and before_close
 
-for stop in route_list:
-    stop_zip = stop["TOZIP"]
-    cube = stop["CUBE"]
+        if verbose:
+            print("Stop:", stop["ORDERID"])
+            print(" Arrive:", to_clock(arrival))
+            print(" Start service:", to_clock(service_start))
+            print(" Depart:", to_clock(departure))
+            print(" Before close:", before_close)
 
-    miles_leg = get_distance(current_zip, stop_zip)
-    drive = miles_leg / driving_speed
-    arrival = current_time + drive
-    service_start = max(arrival, window_open)
-    wait = max(0, window_open - arrival)
-    unload = get_unload_time(cube)
-    departure = service_start + unload
-    before_close = service_start <= window_close
-    all_before_close = all_before_close and before_close
+        total_miles += miles_leg
+        total_drive += drive
+        total_wait += wait
+        total_unload += unload
+        total_cube += cube
 
-    print("Stop:", stop["ORDERID"])
-    print(" Arrive:", to_clock(arrival))
-    print(" Start service:", to_clock(service_start))
-    print(" Depart:", to_clock(departure))
-    print(" Before close:", before_close)
+        current_time = departure
+        current_zip = stop_zip
 
-    total_miles += miles_leg
-    total_drive += drive
-    total_wait += wait
-    total_unload += unload
-    total_cube += cube
+    miles_back = get_distance(current_zip, depot_zip)
+    drive_back = miles_back / driving_speed
+    return_time = current_time + drive_back
 
-    current_time = departure
-    current_zip = stop_zip
+    total_miles += miles_back
+    total_drive += drive_back
+    total_duty = total_drive + total_unload + total_wait
 
+    capacity_feasible = total_cube <= van_capacity
+    dot_feasible = (total_drive <= max_driving) and (total_duty <= max_duty)
+    overall_feasible = capacity_feasible and all_before_close and dot_feasible
 
-miles_back = get_distance(current_zip, depot_zip)
-drive_back = miles_back / driving_speed
-return_time = current_time + drive_back
+    results = {
+        "total_miles": int(total_miles),
+        "total_drive": round(float(total_drive), 3),
+        "total_unload": round(float(total_unload), 3),
+        "total_wait": round(float(total_wait), 3),
+        "total_duty": round(float(total_duty), 3),
+        "total_cube": int(total_cube),
+        "return_time": round(float(return_time), 3),
+        "capacity_feasible": bool(capacity_feasible),
+        "window_feasible": bool(all_before_close),
+        "dot_feasible": bool(dot_feasible),
+        "overall_feasible": bool(overall_feasible)
+    }
 
-total_miles += miles_back
-total_drive += drive_back
-total_duty = total_drive + total_unload + total_wait
+    if verbose:
+        print("\nReturn to depot:", to_clock(return_time))
+        print("\nTotals")
+        print(results)
 
-print("\nReturn to depot:", to_clock(return_time))
+    return results
 
-print("\nTotals")
-print("Total miles:", total_miles)
-print("Total drive hours:", total_drive)
-print("Total unload hours:", total_unload)
-print("Total wait hours:", total_wait)
-print("Total duty hours:", total_duty)
-print("Total cube:", total_cube)
+def best_append(route_list, candidate_orders):
+    best_order = None
+    best_results = None
+    best_extra_miles = float("inf")
 
-print("\nConstraints")
-print("Capacity feasible:", total_cube <= van_capacity)
-print("Window feasible:", all_before_close)
-print("DOT feasible:", total_drive <= max_driving and total_duty <= max_duty)
+    base_results = evaluate_route(route_list, verbose=False)
+    base_miles = base_results["total_miles"]
+
+    for _, cand in candidate_orders.iterrows():
+        trial_route = route_list + [cand]
+        results = evaluate_route(trial_route, verbose=False)
+
+        if results["overall_feasible"]:
+            extra_miles = results["total_miles"] - base_miles
+
+            if extra_miles < best_extra_miles:
+                best_order = cand
+                best_results = results
+                best_extra_miles = extra_miles
+
+    return best_order, best_results
+
+def build_one_route(day_orders):
+    seed = day_orders.iloc[0]
+    route_list = [seed]
+
+    remaining = day_orders[day_orders["ORDERID"] != seed["ORDERID"]].copy()
+
+    while True:
+        best_order, best_results = best_append(route_list, remaining)
+
+        if best_order is None:
+            break
+
+        route_list.append(best_order)
+        remaining = remaining[remaining["ORDERID"] != best_order["ORDERID"]].copy()
+
+    return route_list, remaining
+
+def build_all_routes_for_day(day_orders):
+    remaining = day_orders.copy()
+    all_routes = []
+
+    while len(remaining) > 0:
+        route_list, remaining = build_one_route(remaining)
+        all_routes.append(route_list)
+
+    return all_routes
+
+days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+weekly_total_miles = 0
+weekly_total_routes = 0
+
+for day in days:
+    day_orders = orders[orders["DayOfWeek"] == day].copy()
+    all_routes = build_all_routes_for_day(day_orders)
+
+    print(f"\n===== {day} =====")
+
+    day_total_miles = 0
+
+    for i, route in enumerate(all_routes, start=1):
+        results = evaluate_route(route, verbose=False)
+        route_ids = [int(stop["ORDERID"]) for stop in route]
+
+        print(f"Route {i}: {route_ids}")
+        print(results)
+        print()
+
+        day_total_miles += results["total_miles"]
+
+    print(f"{day} route count:", len(all_routes))
+    print(f"{day} total miles:", day_total_miles)
+
+    weekly_total_miles += day_total_miles
+    weekly_total_routes += len(all_routes)
+
+print("\n===== WEEKLY SUMMARY =====")
+print("Total weekly routes:", weekly_total_routes)
+print("Total weekly miles:", weekly_total_miles)
