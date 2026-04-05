@@ -142,8 +142,9 @@ def evaluate_route(route_list, verbose=False):
 
     return results
 
-def best_append(route_list, candidate_orders):
+def best_insertion(route_list, candidate_orders):
     best_order = None
+    best_route = None
     best_results = None
     best_extra_miles = float("inf")
 
@@ -151,35 +152,75 @@ def best_append(route_list, candidate_orders):
     base_miles = base_results["total_miles"]
 
     for _, cand in candidate_orders.iterrows():
-        trial_route = route_list + [cand]
-        results = evaluate_route(trial_route, verbose=False)
+        for pos in range(len(route_list) + 1):
+            trial_route = route_list[:pos] + [cand] + route_list[pos:]
+            results = evaluate_route(trial_route, verbose=False)
 
-        if results["overall_feasible"]:
-            extra_miles = results["total_miles"] - base_miles
+            if results["overall_feasible"]:
+                extra_miles = results["total_miles"] - base_miles
 
-            if extra_miles < best_extra_miles:
-                best_order = cand
-                best_results = results
-                best_extra_miles = extra_miles
+                if extra_miles < best_extra_miles:
+                    best_order = cand
+                    best_route = trial_route
+                    best_results = results
+                    best_extra_miles = extra_miles
 
-    return best_order, best_results
+    return best_order, best_route, best_results
 
-def build_one_route(day_orders):
-    seed = day_orders.iloc[0]
+def build_route_from_seed(day_orders, seed):
     route_list = [seed]
-
     remaining = day_orders[day_orders["ORDERID"] != seed["ORDERID"]].copy()
 
     while True:
-        best_order, best_results = best_append(route_list, remaining)
-
+        best_order, best_route, best_results = best_insertion(route_list, remaining)
         if best_order is None:
             break
 
-        route_list.append(best_order)
+        route_list = best_route
         remaining = remaining[remaining["ORDERID"] != best_order["ORDERID"]].copy()
 
     return route_list, remaining
+
+def build_one_route(day_orders):
+    candidate_seeds = []
+
+    # first remaining
+    candidate_seeds.append(day_orders.iloc[0])
+
+    # farthest from depot
+    farthest_idx = day_orders["TOZIP"].apply(lambda z: get_distance(depot_zip, z)).idxmax()
+    candidate_seeds.append(day_orders.loc[farthest_idx])
+
+    # largest cube
+    largest_idx = day_orders["CUBE"].idxmax()
+    candidate_seeds.append(day_orders.loc[largest_idx])
+
+    # remove duplicates
+    unique_seeds = []
+    seen_ids = set()
+    for seed in candidate_seeds:
+        oid = int(seed["ORDERID"])
+        if oid not in seen_ids:
+            unique_seeds.append(seed)
+            seen_ids.add(oid)
+
+    best_route = None
+    best_remaining = None
+    best_score = float("inf")
+
+    for seed in unique_seeds:
+        route_list, remaining = build_route_from_seed(day_orders, seed)
+        results = evaluate_route(route_list, verbose=False)
+
+        # simple score: lower miles is better
+        score = results["total_miles"]
+
+        if score < best_score:
+            best_score = score
+            best_route = route_list
+            best_remaining = remaining
+
+    return best_route, best_remaining
 
 def build_all_routes_for_day(day_orders):
     remaining = day_orders.copy()
@@ -191,6 +232,107 @@ def build_all_routes_for_day(day_orders):
 
     return all_routes
 
+def best_relocation(stop, routes, skip_route_idx):
+    best_target_idx = None
+    best_new_route = None
+    best_extra_miles = float("inf")
+
+    stop_df = pd.DataFrame([stop])
+
+    for j, route in enumerate(routes):
+        if j == skip_route_idx:
+            continue
+
+        base_results = evaluate_route(route, verbose=False)
+        base_miles = base_results["total_miles"]
+
+        for pos in range(len(route) + 1):
+            trial_route = route[:pos] + [stop] + route[pos:]
+            results = evaluate_route(trial_route, verbose=False)
+
+            if results["overall_feasible"]:
+                extra_miles = results["total_miles"] - base_miles
+
+                if extra_miles < best_extra_miles:
+                    best_target_idx = j
+                    best_new_route = trial_route
+                    best_extra_miles = extra_miles
+
+    return best_target_idx, best_new_route, best_extra_miles
+
+def try_eliminate_one_route(all_routes):
+    route_infos = []
+    for i, route in enumerate(all_routes):
+        results = evaluate_route(route, verbose=False)
+        route_infos.append((i, results["total_cube"], results["total_miles"]))
+
+    # try small/weak routes first
+    route_infos.sort(key=lambda x: (x[1], x[2]))
+
+    for remove_idx, _, _ in route_infos:
+        route_to_remove = all_routes[remove_idx]
+        new_routes = all_routes.copy()
+        success = True
+
+        for stop in route_to_remove:
+            target_idx, new_target_route, extra_miles = best_relocation(stop, new_routes, remove_idx)
+
+            if target_idx is None:
+                success = False
+                break
+
+            new_routes[target_idx] = new_target_route
+
+        if success:
+            new_routes.pop(remove_idx)
+            return new_routes, True
+
+    return all_routes, False
+
+def consolidate_routes(all_routes):
+    improved = True
+
+    while improved:
+        all_routes, improved = try_eliminate_one_route(all_routes)
+
+    return all_routes
+
+def two_opt_route(route):
+    best_route = route[:]
+    best_results = evaluate_route(best_route, verbose=False)
+    improved = True
+
+    while improved:
+        improved = False
+
+        # need at least 4 stops to make 2-opt meaningful
+        for i in range(len(best_route) - 1):
+            for j in range(i + 2, len(best_route)):
+                trial_route = best_route[:i] + best_route[i:j+1][::-1] + best_route[j+1:]
+                trial_results = evaluate_route(trial_route, verbose=False)
+
+                if trial_results["overall_feasible"] and trial_results["total_miles"] < best_results["total_miles"]:
+                    best_route = trial_route
+                    best_results = trial_results
+                    improved = True
+                    break
+
+            if improved:
+                break
+
+    return best_route
+
+def improve_routes_by_2opt(all_routes):
+    improved_routes = []
+
+    for route in all_routes:
+        if len(route) >= 4:
+            improved_routes.append(two_opt_route(route))
+        else:
+            improved_routes.append(route)
+
+    return improved_routes
+
 days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
 weekly_total_miles = 0
@@ -199,6 +341,8 @@ weekly_total_routes = 0
 for day in days:
     day_orders = orders[orders["DayOfWeek"] == day].copy()
     all_routes = build_all_routes_for_day(day_orders)
+    all_routes = consolidate_routes(all_routes)
+    all_routes = improve_routes_by_2opt(all_routes)
 
     print(f"\n===== {day} =====")
 
