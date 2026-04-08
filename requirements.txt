@@ -1,0 +1,9 @@
+numpy
+pandas
+folium
+openpyxl
+matplotlib
+scipy
+folium
+pgeocode
+scikit-learn
