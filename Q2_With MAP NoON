@@ -1,0 +1,954 @@
+"""
+q2_overnight.py — Heterogeneous fleet routing for NHG Q2 (overnight allowed).
+
+Builds weekly routes using Vans (3 200 ft³) and Straight Trucks (1 400 ft³)
+from DC Wilmington MA across five weekdays. Overnight routes are permitted.
+After solving, mirrors the Excel SolutionCheck constraints and prints a
+per-route audit table. Writes the flat 0-separated OID sequence for
+direct paste into Sol_Copy_Sr26.xlsm column B.
+
+Input:
+    deliveries.xlsx  — OrderTable, LocationTable
+    distances.xlsx   — ZipID-keyed distance matrix
+
+Output (output/):
+    Q2_ON_Routes.csv
+    Q2_ON_SolverInput.txt
+    Q2_ON_Viz1_Fleet.png
+    Q2_ON_Viz2_RouteMap.png
+"""
+
+import os
+import csv
+import json
+import time
+import colorsys
+import warnings
+from itertools import combinations
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings("ignore")
+
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+
+DELIVERIES_FILE = os.path.join(BASE_DIR, "deliveries.xlsx")
+DISTANCES_FILE  = os.path.join(BASE_DIR, "distances.xlsx")
+
+VAN_CAP        = 3200
+ST_CAP         = 1400
+UNLOAD_VAN     = 0.030
+UNLOAD_ST      = 0.043   # ST lift-gate unloading is slower per ft³
+MIN_UNLOAD     = 30
+SPEED_MPH      = 40
+WINDOW_OPEN    = 480     # 8 am in minutes from midnight
+WINDOW_CLOSE   = 1080    # 6 pm
+MAX_DRIVE_MIN  = 660     # 11-hour DOT drive cap
+MAX_DUTY_MIN   = 840     # 14-hour DOT duty cap
+BREAK_MIN      = 600     # mandatory 10-hour overnight rest
+WEEKS_PER_YEAR = 52
+
+DAYS         = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+Q1_WEEKLY_MI = 7025.0
+
+DAY_COLORS = {
+    "Mon": {"van": "#e53935", "st": "#ff8a80"},
+    "Tue": {"van": "#fb8c00", "st": "#ffd180"},
+    "Wed": {"van": "#1e88e5", "st": "#82b1ff"},
+    "Thu": {"van": "#8e24aa", "st": "#ea80fc"},
+    "Fri": {"van": "#43a047", "st": "#b9f6ca"},
+}
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def loadData():
+    """Return all lookup structures needed by the solver."""
+    orders   = pd.read_excel(DELIVERIES_FILE, sheet_name="OrderTable")
+    location = pd.read_excel(DELIVERIES_FILE, sheet_name="LocationTable")
+    distRaw  = pd.read_excel(DISTANCES_FILE,  sheet_name="Sheet1", header=None)
+
+    orders = orders[orders["ORDERID"] != 0].copy()
+    orders["CUBE"]   = orders["CUBE"].astype(int)
+    orders["TOZIP"]  = orders["TOZIP"].astype(str).str.zfill(5)
+    orders["ST_REQ"] = orders["ST required?"].str.lower() == "yes"
+
+    location = location.dropna(subset=["ZIPID"]).copy()
+    location["ZIPID"]   = location["ZIPID"].astype(int)
+    location["ZIP_STR"] = location["ZIP"].astype(int).astype(str).str.zfill(5)
+    location = location.rename(columns={"Y": "LAT", "X": "LON"})
+
+    zipToId      = dict(zip(location["ZIP_STR"], location["ZIPID"]))
+    zipidToCoord = {int(r["ZIPID"]): (float(r["LAT"]), float(r["LON"]))
+                    for _, r in location.iterrows()}
+    zipidToCity  = {int(r["ZIPID"]): str(r["CITY"])  for _, r in location.iterrows()}
+    zipidToState = {int(r["ZIPID"]): str(r["STATE"]) for _, r in location.iterrows()}
+
+    depotId  = int(zipToId["01887"])
+    colIds   = distRaw.iloc[1, 2:].astype(int).tolist()
+    distArr  = distRaw.iloc[2:, 2:].astype(float).values
+    distIdx  = {int(z): i for i, z in enumerate(colIds)}
+
+    orderDict = {}
+    for _, row in orders.iterrows():
+        oid = int(row["ORDERID"])
+        orderDict[oid] = {
+            "cube":  int(row["CUBE"]),
+            "day":   row["DayOfWeek"],
+            "zipId": int(zipToId[row["TOZIP"]]),
+            "stReq": bool(row["ST_REQ"]),
+        }
+
+    return orderDict, depotId, distArr, distIdx, zipidToCoord, zipidToCity, zipidToState
+
+
+# ---------------------------------------------------------------------------
+# Primitives
+# ---------------------------------------------------------------------------
+
+def getDist(a, b, distArr, distIdx):
+    return distArr[distIdx[int(a)], distIdx[int(b)]]
+
+
+def driveMins(a, b, distArr, distIdx):
+    return (getDist(a, b, distArr, distIdx) / SPEED_MPH) * 60
+
+
+def unloadMins(cube, vehicle):
+    rate = UNLOAD_VAN if vehicle == "van" else UNLOAD_ST
+    return max(MIN_UNLOAD, rate * cube)
+
+
+def getCap(vehicle):
+    return VAN_CAP if vehicle == "van" else ST_CAP
+
+
+# ---------------------------------------------------------------------------
+# Feasibility checker
+# ---------------------------------------------------------------------------
+
+def simulate(route, vehicle, orderDict, depotId, distArr, distIdx):
+    """Return feasibility, miles, overnight flag, and per-shift DOT hours.
+
+    Return-leg break is never allowed — a break there has no Day 2
+    store deliveries and does not qualify as a valid overnight route.
+    """
+    cap = getCap(vehicle)
+    if not route:
+        return {"feasible": True, "miles": 0.0, "overnight": False,
+                "driveD1": 0.0, "dutyD1": 0.0, "driveD2": 0.0, "dutyD2": 0.0}
+    if sum(orderDict[o]["cube"] for o in route) > cap:
+        return {"feasible": False, "miles": 0.0, "overnight": False}
+
+    firstZip  = orderDict[route[0]]["zipId"]
+    clock     = WINDOW_OPEN - driveMins(depotId, firstZip, distArr, distIdx)
+    loc       = depotId
+    miles     = driveAcc = dutyAcc = driveD1 = dutyD1 = 0.0
+    overnight = False
+
+    for oid in route:
+        dest   = orderDict[oid]["zipId"]
+        legMi  = getDist(loc, dest, distArr, distIdx)
+        legMin = driveMins(loc, dest, distArr, distIdx)
+        ul     = unloadMins(orderDict[oid]["cube"], vehicle)
+        dLeft  = MAX_DRIVE_MIN - driveAcc
+        dyLeft = MAX_DUTY_MIN  - dutyAcc
+
+        if legMin > dLeft or legMin > dyLeft:
+            if overnight:
+                return {"feasible": False, "miles": miles, "overnight": overnight}
+            drv      = min(dLeft, dyLeft)
+            driveD1  = driveAcc + drv
+            dutyD1   = dutyAcc  + drv
+            clock   += drv + BREAK_MIN
+            miles   += (drv / 60) * SPEED_MPH
+            driveAcc = dutyAcc = 0.0
+            overnight = True
+            if clock < WINDOW_OPEN + 1440:
+                clock = WINDOW_OPEN + 1440
+            remMi  = legMi - (drv / 60) * SPEED_MPH
+            remMin = (remMi / SPEED_MPH) * 60
+            clock    += remMin; driveAcc += remMin; dutyAcc += remMin
+            miles    += remMi;  loc = dest
+            if clock > WINDOW_CLOSE + 1440:
+                return {"feasible": False, "miles": miles, "overnight": overnight}
+            clock += ul; dutyAcc += ul
+            continue
+
+        clock    += legMin; driveAcc += legMin; dutyAcc += legMin
+        miles    += legMi;  loc = dest
+        if clock > WINDOW_CLOSE + (1440 if overnight else 0):
+            return {"feasible": False, "miles": miles, "overnight": overnight}
+        clock += ul; dutyAcc += ul
+
+    retMi  = getDist(loc, depotId, distArr, distIdx)
+    retMin = driveMins(loc, depotId, distArr, distIdx)
+    if driveAcc + retMin > MAX_DRIVE_MIN or dutyAcc + retMin > MAX_DUTY_MIN:
+        return {"feasible": False, "miles": miles, "overnight": overnight}
+
+    miles    += retMi; driveAcc += retMin; dutyAcc += retMin
+    driveD2   = driveAcc / 60 if overnight else 0.0
+    dutyD2    = dutyAcc  / 60 if overnight else 0.0
+    driveD1   = driveD1  / 60 if overnight else driveAcc / 60
+    dutyD1    = dutyD1   / 60 if overnight else dutyAcc  / 60
+
+    return {"feasible": True, "miles": miles, "overnight": overnight,
+            "driveD1": driveD1, "dutyD1": dutyD1,
+            "driveD2": driveD2, "dutyD2": dutyD2}
+
+
+def getMiles(route, vehicle, orderDict, depotId, distArr, distIdx):
+    res = simulate(route, vehicle, orderDict, depotId, distArr, distIdx)
+    return res["miles"] if res["feasible"] else float("inf")
+
+
+# ---------------------------------------------------------------------------
+# Improvement heuristics
+# ---------------------------------------------------------------------------
+
+def twoOpt(route, vehicle, orderDict, depotId, distArr, distIdx):
+    """Reverse sub-segments until no reversal reduces route miles."""
+    if len(route) < 3:
+        return route
+    best     = route[:]
+    bestMi   = getMiles(best, vehicle, orderDict, depotId, distArr, distIdx)
+    improved = True
+    while improved:
+        improved = False
+        for i in range(len(best) - 1):
+            for j in range(i + 2, len(best)):
+                cand = best[:i+1] + best[i+1:j+1][::-1] + best[j+1:]
+                res  = simulate(cand, vehicle, orderDict, depotId, distArr, distIdx)
+                if res["feasible"] and res["miles"] < bestMi - 0.01:
+                    best, bestMi, improved = cand, res["miles"], True
+                    break
+            if improved:
+                break
+    return best
+
+
+def orOpt(routes, vehicle, orderDict, depotId, distArr, distIdx):
+    """Relocate stops between same-fleet routes — catches misassignments 2-opt cannot fix."""
+    cap      = getCap(vehicle)
+    routes   = [r[:] for r in routes]
+    improved = True
+    while improved:
+        improved = False
+        for r1 in range(len(routes)):
+            if not routes[r1]: continue
+            for pos in range(len(routes[r1])):
+                oid   = routes[r1][pos]
+                newR1 = routes[r1][:pos] + routes[r1][pos+1:]
+                for r2 in range(len(routes)):
+                    if not routes[r2]: continue
+                    cubeR2 = sum(orderDict[o]["cube"] for o in routes[r2])
+                    if r1 != r2 and cubeR2 + orderDict[oid]["cube"] > cap: continue
+                    before = getMiles(routes[r1], vehicle, orderDict, depotId, distArr, distIdx)
+                    if r1 != r2:
+                        before += getMiles(routes[r2], vehicle, orderDict, depotId, distArr, distIdx)
+                    for ins in range(len(routes[r2]) + 1):
+                        if r1 == r2:
+                            cand = newR1[:ins] + [oid] + newR1[ins:]
+                            res  = simulate(cand, vehicle, orderDict, depotId, distArr, distIdx)
+                            if res["feasible"] and res["miles"] < getMiles(routes[r1], vehicle, orderDict, depotId, distArr, distIdx) - 0.01:
+                                routes[r1] = cand; improved = True; break
+                        else:
+                            newR2 = routes[r2][:ins] + [oid] + routes[r2][ins:]
+                            r1r   = simulate(newR1, vehicle, orderDict, depotId, distArr, distIdx)
+                            r2r   = simulate(newR2, vehicle, orderDict, depotId, distArr, distIdx)
+                            if r1r["feasible"] and r2r["feasible"]:
+                                if r1r["miles"] + r2r["miles"] < before - 0.01:
+                                    routes[r1] = newR1; routes[r2] = newR2
+                                    improved = True; break
+                    if improved: break
+                if improved: break
+            if improved: break
+    return [r for r in routes if r]
+
+
+# ---------------------------------------------------------------------------
+# Construction heuristic
+# ---------------------------------------------------------------------------
+
+def unifiedCW(dayOids, orderDict, depotId, distArr, distIdx):
+    """Clarke-Wright over all orders at once so flexible orders cluster with nearby ST routes."""
+    routes    = [[oid] for oid in dayOids]
+    routeCube = [orderDict[oid]["cube"] for oid in dayOids]
+    routeOf   = {oid: i for i, oid in enumerate(dayOids)}
+
+    routeVeh = []
+    for oid in dayOids:
+        if orderDict[oid]["stReq"]:       routeVeh.append("st")
+        elif orderDict[oid]["cube"] > ST_CAP: routeVeh.append("van")
+        else:                              routeVeh.append("flex")
+
+    savings = []
+    for i, j in combinations(dayOids, 2):
+        s = (getDist(depotId, orderDict[i]["zipId"], distArr, distIdx)
+             + getDist(depotId, orderDict[j]["zipId"], distArr, distIdx)
+             - getDist(orderDict[i]["zipId"], orderDict[j]["zipId"], distArr, distIdx))
+        savings.append((s, i, j))
+        savings.append((s, j, i))
+    savings.sort(key=lambda x: -x[0])
+
+    for sVal, iOid, jOid in savings:
+        if sVal <= 0: break
+        ri = routeOf[iOid]; rj = routeOf[jOid]
+        if ri == rj or routes[ri] is None or routes[rj] is None: continue
+        if routes[ri][-1] != iOid or routes[rj][0] != jOid:     continue
+        vi = routeVeh[ri]; vj = routeVeh[rj]
+        if (vi == "st" and vj == "van") or (vi == "van" and vj == "st"): continue
+        mergedVeh = ("st"  if (vi == "st"  or vj == "st")  else
+                     "van" if (vi == "van" or vj == "van") else "flex")
+        checkVeh  = "st" if mergedVeh == "st" else "van"
+        if routeCube[ri] + routeCube[rj] > getCap(checkVeh): continue
+        merged = routes[ri] + routes[rj]
+        if not simulate(merged, checkVeh, orderDict, depotId, distArr, distIdx)["feasible"]: continue
+        routes[ri]     = merged
+        routeCube[ri] += routeCube[rj]
+        routeVeh[ri]   = mergedVeh
+        routes[rj]     = None
+        for oid in routes[ri]: routeOf[oid] = ri
+
+    vanRoutes = [r for i, r in enumerate(routes) if r is not None and routeVeh[i] != "st"]
+    stRoutes  = [r for i, r in enumerate(routes) if r is not None and routeVeh[i] == "st"]
+    return vanRoutes, stRoutes
+
+
+def crossFleetImprove(vanRoutes, stRoutes, orderDict, depotId, distArr, distIdx):
+    """Move flexible stops between fleets when cheaper. ST-required orders never move."""
+    improved = True
+    while improved:
+        improved = False
+        for vIdx in range(len(vanRoutes)):
+            if not vanRoutes[vIdx]: continue
+            for pos in range(len(vanRoutes[vIdx])):
+                oid = vanRoutes[vIdx][pos]
+                if orderDict[oid]["stReq"] or orderDict[oid]["cube"] > ST_CAP: continue
+                newVan = vanRoutes[vIdx][:pos] + vanRoutes[vIdx][pos+1:]
+                for sIdx in range(len(stRoutes)):
+                    if not stRoutes[sIdx]: continue
+                    if sum(orderDict[o]["cube"] for o in stRoutes[sIdx]) + orderDict[oid]["cube"] > ST_CAP: continue
+                    before = (getMiles(vanRoutes[vIdx], "van", orderDict, depotId, distArr, distIdx)
+                              + getMiles(stRoutes[sIdx],  "st",  orderDict, depotId, distArr, distIdx))
+                    for ins in range(len(stRoutes[sIdx]) + 1):
+                        newSt = stRoutes[sIdx][:ins] + [oid] + stRoutes[sIdx][ins:]
+                        vr    = simulate(newVan, "van", orderDict, depotId, distArr, distIdx)
+                        sr    = simulate(newSt,  "st",  orderDict, depotId, distArr, distIdx)
+                        if vr["feasible"] and sr["feasible"] and vr["miles"] + sr["miles"] < before - 0.01:
+                            vanRoutes[vIdx] = newVan; stRoutes[sIdx] = newSt
+                            improved = True; break
+                    if improved: break
+                if improved: break
+            if improved: break
+        if improved: continue
+        for sIdx in range(len(stRoutes)):
+            if not stRoutes[sIdx]: continue
+            for pos in range(len(stRoutes[sIdx])):
+                oid = stRoutes[sIdx][pos]
+                if orderDict[oid]["stReq"]: continue
+                newSt = stRoutes[sIdx][:pos] + stRoutes[sIdx][pos+1:]
+                for vIdx in range(len(vanRoutes)):
+                    if not vanRoutes[vIdx]: continue
+                    if sum(orderDict[o]["cube"] for o in vanRoutes[vIdx]) + orderDict[oid]["cube"] > VAN_CAP: continue
+                    before = (getMiles(stRoutes[sIdx],  "st",  orderDict, depotId, distArr, distIdx)
+                              + getMiles(vanRoutes[vIdx], "van", orderDict, depotId, distArr, distIdx))
+                    for ins in range(len(vanRoutes[vIdx]) + 1):
+                        newVan = vanRoutes[vIdx][:ins] + [oid] + vanRoutes[vIdx][ins:]
+                        sr     = simulate(newSt,  "st",  orderDict, depotId, distArr, distIdx)
+                        vr     = simulate(newVan, "van", orderDict, depotId, distArr, distIdx)
+                        if sr["feasible"] and vr["feasible"] and sr["miles"] + vr["miles"] < before - 0.01:
+                            stRoutes[sIdx] = newSt; vanRoutes[vIdx] = newVan
+                            improved = True; break
+                    if improved: break
+                if improved: break
+            if improved: break
+    return [r for r in vanRoutes if r], [r for r in stRoutes if r]
+
+
+# ---------------------------------------------------------------------------
+# Day solver
+# ---------------------------------------------------------------------------
+
+def solveDay(day, ordersByDay, orderDict, depotId, distArr, distIdx):
+    """Run unified CW, improve each fleet, then correct cross-fleet assignments."""
+    dayOids             = ordersByDay[day]
+    vanRoutes, stRoutes = unifiedCW(dayOids, orderDict, depotId, distArr, distIdx)
+    vanRoutes = orOpt(
+        [twoOpt(r, "van", orderDict, depotId, distArr, distIdx) for r in vanRoutes],
+        "van", orderDict, depotId, distArr, distIdx)
+    stRoutes  = orOpt(
+        [twoOpt(r, "st",  orderDict, depotId, distArr, distIdx) for r in stRoutes],
+        "st",  orderDict, depotId, distArr, distIdx)
+    vanRoutes, stRoutes = crossFleetImprove(
+        vanRoutes, stRoutes, orderDict, depotId, distArr, distIdx)
+    vanMi = sum(getMiles(r, "van", orderDict, depotId, distArr, distIdx) for r in vanRoutes)
+    stMi  = sum(getMiles(r, "st",  orderDict, depotId, distArr, distIdx) for r in stRoutes)
+    return {"vanRoutes": vanRoutes, "stRoutes": stRoutes,
+            "vanMiles":  vanMi,    "stMiles":  stMi,
+            "total":     vanMi + stMi,
+            "nVan":      len(vanRoutes), "nSt": len(stRoutes)}
+
+
+# ---------------------------------------------------------------------------
+# Excel solver verification
+# ---------------------------------------------------------------------------
+
+def verifySolution(allVan, allSt, orderDict, depotId, distArr, distIdx):
+    """Mirror all five Excel SolutionCheck constraints and print per-route audit."""
+    print()
+    print(f"  {'─'*78}")
+    print(f"  SOLUTION VERIFICATION  (mirrors Sol_Copy_Sr26.xlsm SolutionCheck)")
+    print(f"  {'─'*78}")
+    print(f"  {'Route':<14} {'Veh':<4} {'Stops':>5} {'Miles':>7} "
+          f"{'D1 Drive':>9} {'D1 Duty':>8} {'D2 Drive':>9} {'D2 Duty':>8} "
+          f"{'Cube':>6} {'Cap':>5}  Status")
+    print(f"  {'-'*78}")
+
+    allServed  = []
+    violations = []
+
+    for day in DAYS:
+        for ri, route in enumerate(allVan[day]):
+            res  = simulate(route, "van", orderDict, depotId, distArr, distIdx)
+            cube = sum(orderDict[o]["cube"] for o in route)
+            tag  = f"{day} Van R{ri+1}"
+            iss  = _routeIssues(res, cube, "van")
+            if iss: violations.append((tag, iss))
+            _printRow(tag, "Van", len(route), res, cube, VAN_CAP, iss)
+            allServed.extend(route)
+
+        for ri, route in enumerate(allSt[day]):
+            res  = simulate(route, "st", orderDict, depotId, distArr, distIdx)
+            cube = sum(orderDict[o]["cube"] for o in route)
+            tag  = f"{day} ST  R{ri+1}"
+            iss  = _routeIssues(res, cube, "st")
+            if iss: violations.append((tag, iss))
+            _printRow(tag, "ST", len(route), res, cube, ST_CAP, iss)
+            allServed.extend(route)
+
+    print(f"  {'-'*78}")
+
+    orderOk  = len(allServed) == 261 and len(set(allServed)) == 261
+    allPass  = orderOk and not violations
+
+    checks = [
+        ("261 orders served, none duplicated",     orderOk),
+        ("Van capacity ≤ 3,200 ft³ per route",
+         all(sum(orderDict[o]["cube"] for o in r) <= VAN_CAP for d in DAYS for r in allVan[d])),
+        ("ST capacity  ≤ 1,400 ft³ per route",
+         all(sum(orderDict[o]["cube"] for o in r) <= ST_CAP  for d in DAYS for r in allSt[d])),
+        ("DOT drive ≤ 11 h per shift",             not any("DRIVE" in i for _, il in violations for i in il)),
+        ("DOT duty  ≤ 14 h per shift",             not any("DUTY"  in i for _, il in violations for i in il)),
+        ("All routes feasible",                    not violations),
+    ]
+    print()
+    print(f"  {'Constraint':<48} Status")
+    print(f"  {'-'*48} {'-'*8}")
+    for desc, ok in checks:
+        print(f"  {desc:<48} {'✓  PASS' if ok else '✗  FAIL'}")
+    print(f"  {'─'*58}")
+    print(f"  {'✓  ALL CONSTRAINTS SATISFIED' if allPass else '✗  VIOLATIONS FOUND'}")
+    if violations:
+        for tag, iss in violations:
+            print(f"     {tag}: {', '.join(iss)}")
+    print(f"  {'─'*58}")
+    return allPass
+
+
+def _routeIssues(res, cube, vehicle):
+    issues = []
+    if not res["feasible"]:                issues.append("INFEASIBLE")
+    if cube > getCap(vehicle):             issues.append(f"CAP {cube}>{getCap(vehicle)}")
+    if res.get("driveD1", 0) > 11.01:     issues.append(f"D1-DRIVE {res['driveD1']:.2f}h")
+    if res.get("dutyD1",  0) > 14.01:     issues.append(f"D1-DUTY {res['dutyD1']:.2f}h")
+    if res.get("driveD2", 0) > 11.01:     issues.append(f"D2-DRIVE {res['driveD2']:.2f}h")
+    if res.get("dutyD2",  0) > 14.01:     issues.append(f"D2-DUTY {res['dutyD2']:.2f}h")
+    return issues
+
+
+def _printRow(tag, veh, stops, res, cube, cap, issues):
+    d1d = res.get("driveD1", 0); d1y = res.get("dutyD1", 0)
+    d2d = res.get("driveD2", 0); d2y = res.get("dutyD2", 0)
+    status = "✓ OK" if not issues else "✗ FAIL"
+    print(f"  {tag:<14} {veh:<4} {stops:>5} {res['miles']:>7.0f} "
+          f"{d1d:>8.2f}h {d1y:>7.2f}h {d2d:>8.2f}h {d2y:>7.2f}h "
+          f"{cube:>6} {cap:>5}  {status}")
+
+
+# ---------------------------------------------------------------------------
+# Exports
+# ---------------------------------------------------------------------------
+
+def exportSolverInput(allVan, allSt, outPath):
+    """Write flat 0-separated OID list for paste into Sol_Copy_Sr26.xlsm column B."""
+    lines = []
+    for day in DAYS:
+        for route in allVan[day] + allSt[day]:
+            lines.append("0")
+            lines.extend(str(o) for o in route)
+    lines.append("0")
+    with open(outPath, "w") as f:
+        f.write("\n".join(lines))
+
+
+def exportCsv(allVan, allSt, orderDict, depotId, distArr, distIdx,
+              zipidToCity, zipidToState, outPath):
+    """Write one CSV row per route with full OID sequence and location detail."""
+    def cityState(oid):
+        zid = orderDict[oid]["zipId"]
+        return f"{zipidToCity.get(zid,'?')}, {zipidToState.get(zid,'?')}"
+
+    def oidSeq(route):
+        return "0 -> " + " -> ".join(str(o) for o in route) + " -> 0"
+
+    def locSeq(route):
+        parts = ["0 (DC-Wilmington,MA)"]
+        for o in route:
+            parts.append(f"{o} ({cityState(o)})")
+        parts.append("0 (DC-Wilmington,MA)")
+        return " -> ".join(parts)
+
+    rows = []
+    for day in DAYS:
+        for ri, route in enumerate(allVan[day]):
+            res  = simulate(route, "van", orderDict, depotId, distArr, distIdx)
+            cube = sum(orderDict[o]["cube"] for o in route)
+            rows.append({
+                "Route":          f"{day}_Van_R{ri+1}",
+                "Day":            day,
+                "Vehicle":        "Van",
+                "Stops":          len(route),
+                "Miles":          round(res["miles"], 1),
+                "Cube_ft3":       cube,
+                "Capacity_ft3":   VAN_CAP,
+                "Util_Pct":       round(cube / VAN_CAP * 100, 1),
+                "Overnight":      "Yes" if res["overnight"] else "No",
+                "D1_Drive_h":     round(res.get("driveD1", 0), 2),
+                "D1_Duty_h":      round(res.get("dutyD1",  0), 2),
+                "D2_Drive_h":     round(res.get("driveD2", 0), 2),
+                "D2_Duty_h":      round(res.get("dutyD2",  0), 2),
+                "Start":          "DC-Wilmington,MA",
+                "End":            "DC-Wilmington,MA",
+                "First_Stop":     cityState(route[0]),
+                "Last_Stop":      cityState(route[-1]),
+                "Order_IDs":      oidSeq(route),
+                "Route_Sequence": locSeq(route),
+            })
+        for ri, route in enumerate(allSt[day]):
+            res  = simulate(route, "st", orderDict, depotId, distArr, distIdx)
+            cube = sum(orderDict[o]["cube"] for o in route)
+            rows.append({
+                "Route":          f"{day}_ST_R{ri+1}",
+                "Day":            day,
+                "Vehicle":        "StraightTruck",
+                "Stops":          len(route),
+                "Miles":          round(res["miles"], 1),
+                "Cube_ft3":       cube,
+                "Capacity_ft3":   ST_CAP,
+                "Util_Pct":       round(cube / ST_CAP * 100, 1),
+                "Overnight":      "Yes" if res["overnight"] else "No",
+                "D1_Drive_h":     round(res.get("driveD1", 0), 2),
+                "D1_Duty_h":      round(res.get("dutyD1",  0), 2),
+                "D2_Drive_h":     round(res.get("driveD2", 0), 2),
+                "D2_Duty_h":      round(res.get("dutyD2",  0), 2),
+                "Start":          "DC-Wilmington,MA",
+                "End":            "DC-Wilmington,MA",
+                "First_Stop":     cityState(route[0]),
+                "Last_Stop":      cityState(route[-1]),
+                "Order_IDs":      oidSeq(route),
+                "Route_Sequence": locSeq(route),
+            })
+
+    with open(outPath, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+
+
+# ---------------------------------------------------------------------------
+# Visualisations
+# ---------------------------------------------------------------------------
+
+def plotFleetAnalysis(allVan, allSt, orderDict, depotId, distArr, distIdx, outPath):
+    """Stacked daily miles and average capacity utilisation per fleet."""
+    vanMi   = [sum(getMiles(r, "van", orderDict, depotId, distArr, distIdx) for r in allVan[d]) for d in DAYS]
+    stMi    = [sum(getMiles(r, "st",  orderDict, depotId, distArr, distIdx) for r in allSt[d])  for d in DAYS]
+    vanUtil = [sum(orderDict[o]["cube"] for r in allVan[d] for o in r) / max(1, len(allVan[d]) * VAN_CAP) * 100 for d in DAYS]
+    stUtil  = [sum(orderDict[o]["cube"] for r in allSt[d]  for o in r) / max(1, len(allSt[d])  * ST_CAP)  * 100 for d in DAYS]
+    nVan    = sum(len(allVan[d]) for d in DAYS)
+    nSt     = sum(len(allSt[d])  for d in DAYS)
+
+    vanColor = "#4db8e8"; stColor = "#f0a030"
+    x        = np.arange(len(DAYS))
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.patch.set_facecolor("#0f1117")
+
+    ax = axes[0]; ax.set_facecolor("#0f1117")
+    ax.bar(x, vanMi, 0.5, label=f"Van ({nVan})", color=vanColor, edgecolor="white", lw=0.5, zorder=3)
+    ax.bar(x, stMi,  0.5, bottom=vanMi, label=f"ST ({nSt})",  color=stColor,  edgecolor="white", lw=0.5, zorder=3)
+    for i, (v, s) in enumerate(zip(vanMi, stMi)):
+        ax.text(i, v + s + 15, f"{v+s:.0f}", ha="center", color="white", fontsize=9.5, fontweight="bold")
+        if v > 50: ax.text(i, v / 2,     f"{v:.0f}", ha="center", color="white",   fontsize=8)
+        if s > 50: ax.text(i, v + s / 2, f"{s:.0f}", ha="center", color="#0f1117", fontsize=8, fontweight="bold")
+    ax.set_xticks(x); ax.set_xticklabels(DAYS)
+    ax.set_ylabel("Miles", color="white")
+    ax.set_title("Daily Miles — Van vs Straight Truck", color="white", fontweight="bold")
+    ax.legend(facecolor="#1e2130", labelcolor="white", fontsize=9)
+    ax.tick_params(colors="white"); ax.yaxis.grid(True, color="#333", ls="--", zorder=0)
+    for sp in ax.spines.values(): sp.set_color("#444")
+
+    ax2 = axes[1]; ax2.set_facecolor("#0f1117")
+    ax2.bar(x - 0.13, vanUtil, 0.26, label="Van %", color=vanColor, edgecolor="white", lw=0.5, zorder=3)
+    ax2.bar(x + 0.13, stUtil,  0.26, label="ST %",  color=stColor,  edgecolor="white", lw=0.5, zorder=3)
+    ax2.axhline(100, color="#e05252", ls="--", lw=1.5, label="100% cap", zorder=5)
+    for i, (v, s) in enumerate(zip(vanUtil, stUtil)):
+        ax2.text(i - 0.13, v + 1.5, f"{v:.0f}%", ha="center", color=vanColor, fontsize=8, fontweight="bold")
+        ax2.text(i + 0.13, s + 1.5, f"{s:.0f}%", ha="center", color=stColor,  fontsize=8, fontweight="bold")
+    ax2.set_xticks(x); ax2.set_xticklabels(DAYS); ax2.set_ylim(0, 118)
+    ax2.set_title("Avg Capacity Utilisation %", color="white", fontweight="bold")
+    ax2.set_ylabel("Utilisation %", color="white")
+    ax2.legend(facecolor="#1e2130", labelcolor="white", fontsize=9)
+    ax2.tick_params(colors="white"); ax2.yaxis.grid(True, color="#333", ls="--", zorder=0)
+    for sp in ax2.spines.values(): sp.set_color("#444")
+
+    fig.suptitle("Q2 (Overnight) — Fleet Analysis", color="white", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(outPath, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close()
+
+
+def plotRouteMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
+                 zipidToCoord, weeklyTotal, outPath):
+    """2×5 static grid — Van (top row) and ST (bottom row) routes per day."""
+    def mkShade(hexC, idx, total):
+        h, s, v = colorsys.rgb_to_hsv(int(hexC[1:3], 16) / 255,
+                                       int(hexC[3:5], 16) / 255,
+                                       int(hexC[5:7], 16) / 255)
+        v2 = 0.4 + idx / max(1, total - 1) * 0.45
+        r, g, b = colorsys.hsv_to_rgb(h, s, v2)
+        return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+
+    depotCoord = zipidToCoord[depotId]
+    fig, axes  = plt.subplots(2, 5, figsize=(26, 11))
+    fig.patch.set_facecolor("#0f1117")
+    fig.suptitle(
+        f"Q2 (Overnight) Route Map  ·  Van top, ST bottom  ·  dashed = overnight  ·  "
+        f"Weekly: {weeklyTotal:,.0f} mi  ·  Annual: {weeklyTotal*52:,.0f} mi",
+        color="white", fontsize=11, fontweight="bold", y=1.01)
+
+    for col, day in enumerate(DAYS):
+        for row, (routeList, vehicle, baseHex) in enumerate([
+            (allVan[day], "van", DAY_COLORS[day]["van"]),
+            (allSt[day],  "st",  DAY_COLORS[day]["st"]),
+        ]):
+            ax    = axes[row][col]; ax.set_facecolor("#0d1b2a")
+            n     = len(routeList)
+            dayMi = sum(getMiles(r, vehicle, orderDict, depotId, distArr, distIdx) for r in routeList)
+            onCt  = sum(1 for r in routeList
+                        if simulate(r, vehicle, orderDict, depotId, distArr, distIdx)["overnight"])
+
+            for ri, route in enumerate(routeList):
+                c    = mkShade(baseHex, ri, n)
+                isOn = simulate(route, vehicle, orderDict, depotId, distArr, distIdx)["overnight"]
+                path = [depotId] + [orderDict[o]["zipId"] for o in route] + [depotId]
+                lons = [zipidToCoord[z][1] for z in path if z in zipidToCoord]
+                lats = [zipidToCoord[z][0] for z in path if z in zipidToCoord]
+                ax.plot(lons, lats, "--" if isOn else "-", color=c, lw=2.0, zorder=3, alpha=0.9)
+                for seq, oid in enumerate(route):
+                    coord = zipidToCoord.get(orderDict[oid]["zipId"])
+                    if not coord: continue
+                    ax.scatter(coord[1], coord[0], s=32, color=c,
+                               marker="o" if vehicle == "van" else "s", zorder=4)
+                    ax.text(coord[1], coord[0], str(seq + 1),
+                            ha="center", va="center", fontsize=4.5,
+                            color="white", fontweight="bold", zorder=5)
+                ax.plot([], [], color=c, lw=2, ls="--" if isOn else "-", label=f"R{ri+1}")
+
+            ax.scatter(depotCoord[1], depotCoord[0], s=220, color="#f5a623", marker="*", zorder=6)
+            ax.text(depotCoord[1], depotCoord[0] + 0.06, "DC",
+                    ha="center", fontsize=7, color="#f5a623", fontweight="bold", zorder=7)
+            vl  = "Van" if vehicle == "van" else "ST"
+            ttl = f"{day} {vl}  ·  {n} routes  ·  {dayMi:.0f} mi"
+            if onCt: ttl += f"  ({onCt} overnight)"
+            ax.set_title(ttl, color="white", fontsize=8.5, fontweight="bold", pad=4)
+            ax.tick_params(colors="#445", labelsize=5.5)
+            for sp in ax.spines.values(): sp.set_color("#223")
+            if col == 0:
+                ax.set_ylabel("Van Routes" if row == 0 else "ST Routes", color="#aaa", fontsize=8)
+            ax.legend(loc="lower right", fontsize=5, framealpha=0.6,
+                      facecolor="#0d1b2a", labelcolor="white", edgecolor="#334")
+
+    plt.tight_layout()
+    plt.savefig(outPath, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close()
+
+
+def generateMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
+                zipidToCoord, zipidToCity, weeklyTotal, outPath):
+    """Write a Leaflet HTML map with CartoDB tiles — opens from any local file."""
+    depotCoord = zipidToCoord[depotId]
+
+    def cityOnly(oid):
+        return zipidToCity.get(orderDict[oid]["zipId"], "?")
+
+    def oidSeq(route):
+        return "0 → " + " → ".join(str(o) for o in route) + " → 0"
+
+    routes = []
+    for day in DAYS:
+        for ri, route in enumerate(allVan[day]):
+            res  = simulate(route, "van", orderDict, depotId, distArr, distIdx)
+            cube = sum(orderDict[o]["cube"] for o in route)
+            coords = [[depotCoord[1], depotCoord[0]]]
+            for o in route:
+                c = zipidToCoord.get(orderDict[o]["zipId"])
+                if c: coords.append([c[1], c[0]])
+            coords.append([depotCoord[1], depotCoord[0]])
+            routes.append({
+                "id": f"{day} Van R{ri+1}", "day": day, "vehicle": "Van",
+                "color": DAY_COLORS[day]["van"], "coords": coords,
+                "overnight": res["overnight"], "miles": round(res["miles"], 1),
+                "cube": cube, "cap": VAN_CAP, "util": round(cube / VAN_CAP * 100, 1),
+                "oid_seq": oidSeq(route),
+                "stops": [{"seq": i+1, "oid": o, "city": cityOnly(o),
+                           "cube": orderDict[o]["cube"],
+                           "lat": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[0],
+                           "lon": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[1]}
+                          for i, o in enumerate(route)],
+            })
+        for ri, route in enumerate(allSt[day]):
+            res  = simulate(route, "st", orderDict, depotId, distArr, distIdx)
+            cube = sum(orderDict[o]["cube"] for o in route)
+            coords = [[depotCoord[1], depotCoord[0]]]
+            for o in route:
+                c = zipidToCoord.get(orderDict[o]["zipId"])
+                if c: coords.append([c[1], c[0]])
+            coords.append([depotCoord[1], depotCoord[0]])
+            routes.append({
+                "id": f"{day} ST R{ri+1}", "day": day, "vehicle": "ST",
+                "color": DAY_COLORS[day]["st"], "coords": coords,
+                "overnight": res["overnight"], "miles": round(res["miles"], 1),
+                "cube": cube, "cap": ST_CAP, "util": round(cube / ST_CAP * 100, 1),
+                "oid_seq": oidSeq(route),
+                "stops": [{"seq": i+1, "oid": o, "city": cityOnly(o),
+                           "cube": orderDict[o]["cube"],
+                           "lat": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[0],
+                           "lon": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[1]}
+                          for i, o in enumerate(route)],
+            })
+
+    rj = json.dumps(routes)
+    dj = json.dumps({"lat": depotCoord[0], "lon": depotCoord[1]})
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>NHG Q2 Route Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:Arial,sans-serif;background:#0f1117;color:#fff;display:flex;height:100vh;overflow:hidden}}
+#sidebar{{width:300px;min-width:300px;background:#1e2130;overflow-y:auto;padding:10px;border-right:1px solid #333}}
+#map{{flex:1}}
+h2{{color:#4db8e8;font-size:13px;margin-bottom:8px}}
+.sum{{background:#252840;border-radius:5px;padding:9px;margin-bottom:8px;font-size:11px;line-height:1.8}}
+.sum b{{color:#fff}}.sum span{{color:#aaa}}
+.frow{{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px}}
+.fb{{padding:3px 8px;border-radius:4px;border:1px solid #444;background:#252840;color:#fff;cursor:pointer;font-size:10px}}
+.fb.on{{border-color:#4db8e8;background:#1a3a5c}}
+.leg{{background:#252840;border-radius:5px;padding:7px;margin-bottom:8px;font-size:10px}}
+.lr{{display:flex;align-items:center;gap:5px;margin-bottom:2px}}
+.ld{{width:11px;height:11px;border-radius:50%;flex-shrink:0}}
+.ri{{background:#252840;border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;border-left:4px solid #444;font-size:10px}}
+.ri:hover{{background:#2e3350}}.ri.sel{{background:#2e3350;border-color:#4db8e8}}
+.rid{{font-weight:bold;font-size:11px}}.rd{{color:#aaa;margin-top:1px}}
+.rq{{color:#6af;font-size:9px;margin-top:2px;word-break:break-all}}
+#ip{{position:absolute;bottom:16px;right:16px;background:rgba(15,17,23,.95);padding:12px 14px;
+     border-radius:8px;border:1px solid #333;font-size:11px;max-width:320px;
+     z-index:1000;display:none;max-height:55vh;overflow-y:auto}}
+#ip h3{{color:#4db8e8;margin-bottom:5px;font-size:12px}}
+.cl{{float:right;cursor:pointer;color:#888}}
+</style></head>
+<body>
+<div id="sidebar">
+  <h2>&#x1F69A; NHG Q2 — Route Map (Overnight)</h2>
+  <div class="sum">
+    <span>Weekly:</span> <b>{weeklyTotal:,.0f} mi</b><br>
+    <span>Annual:</span> <b>{weeklyTotal*52:,.0f} mi</b>
+  </div>
+  <div class="leg">
+    {''.join(f'<div class="lr"><div class="ld" style="background:{DAY_COLORS[d]["van"]}"></div><span>{d} Van</span><div style="flex:1"></div><div class="ld" style="background:{DAY_COLORS[d]["st"]};border-radius:2px"></div><span>{d} ST</span></div>' for d in DAYS)}
+    <div class="lr" style="margin-top:4px;color:#aaa;font-size:9px">solid=day &nbsp;·&nbsp; dashed=overnight</div>
+  </div>
+  <div class="frow">
+    <button class="fb on" onclick="setDay('all',this)">All</button>
+    {''.join(f'<button class="fb" onclick="setDay(`{d}`,this)">{d}</button>' for d in DAYS)}
+  </div>
+  <div class="frow">
+    <button class="fb on" id="bv" onclick="togVeh('Van',this)">Van</button>
+    <button class="fb on" id="bs" onclick="togVeh('ST',this)">ST</button>
+  </div>
+  <div id="rl"></div>
+</div>
+<div id="map"></div>
+<div id="ip">
+  <span class="cl" onclick="this.parentNode.style.display='none'">&#x2715;</span>
+  <h3 id="it"></h3><div id="ib"></div>
+</div>
+<script>
+const R={rj}, D={dj};
+const map = L.map('map', {{center:[42.5,-71.8], zoom:7}});
+/* CartoDB dark tiles work from local files — no Referer required */
+L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png',{{
+  attribution:'&copy; OpenStreetMap &copy; CartoDB', maxZoom:19, subdomains:'abcd'
+}}).addTo(map);
+L.marker([D.lat,D.lon],{{icon:L.divIcon({{
+  html:'<div style="background:#f5a623;border:2px solid #fff;border-radius:50%;width:18px;height:18px;text-align:center;line-height:14px;font-size:14px">&#9733;</div>',
+  iconSize:[18,18],iconAnchor:[9,9]
+}})}}).addTo(map).bindPopup('<b>DC — Wilmington, MA</b>');
+const PL=[];const AV=new Set(['Van','ST']);let CD='all';
+R.forEach(r=>{{
+  const poly=L.polyline(r.coords.map(c=>[c[1],c[0]]),{{
+    color:r.color,weight:r.vehicle==='Van'?3:2,dashArray:r.overnight?'8 5':null,opacity:.88
+  }}).addTo(map);
+  poly.on('click',()=>show(r));
+  const mks=r.stops.map(s=>{{
+    const m=L.circleMarker([s.lat,s.lon],{{
+      radius:r.vehicle==='Van'?6:5,color:r.color,fillColor:r.color,fillOpacity:.9,weight:1.5
+    }}).addTo(map);
+    m.bindTooltip('<b>#'+s.seq+'</b> OID '+s.oid+'<br>'+s.city+' &middot; '+s.cube+' ft&sup3;',{{sticky:true}});
+    m.on('click',()=>show(r));return m;
+  }});
+  PL.push({{r,poly,mks}});
+}});
+function show(r){{
+  document.getElementById('it').textContent=r.id;
+  document.getElementById('ib').innerHTML=
+    '<b>Vehicle:</b> '+r.vehicle+' &nbsp;<b>Day:</b> '+r.day+
+    ' &nbsp;<b>Overnight:</b> '+(r.overnight?'Yes':'No')+'<br>'+
+    '<b>Stops:</b> '+r.stops.length+' &nbsp;<b>Miles:</b> '+r.miles+
+    ' &nbsp;<b>Cube:</b> '+r.cube+'/'+r.cap+' ft&#179; ('+r.util+'%)<br>'+
+    '<b>Sequence:</b><br><span style="color:#6af">'+r.oid_seq+'</span><hr style="border-color:#333;margin:5px 0">'+
+    r.stops.map(s=>'<span style="color:#aaa">#'+s.seq+' OID '+s.oid+' &middot; '+s.city+' &middot; '+s.cube+' ft&#179;</span>').join('<br>');
+  document.getElementById('ip').style.display='block';
+  PL.forEach(p=>{{
+    const sel=p.r.id===r.id;
+    p.poly.setStyle({{weight:sel?5:(p.r.vehicle==='Van'?3:2),opacity:sel?1:.55}});
+    document.querySelectorAll('.ri').forEach(e=>e.classList.toggle('sel',e.dataset.id===r.id));
+  }});
+}}
+function setDay(d,btn){{
+  CD=d;
+  document.querySelectorAll('.fb').forEach(b=>{{
+    if(['All','Mon','Tue','Wed','Thu','Fri'].includes(b.textContent))
+      b.classList.toggle('on',b===btn);
+  }});
+  filt();
+}}
+function togVeh(v,btn){{AV.has(v)?AV.delete(v):AV.add(v);btn.classList.toggle('on',AV.has(v));filt();}}
+function filt(){{
+  PL.forEach(p=>{{
+    const ok=(CD==='all'||p.r.day===CD)&&AV.has(p.r.vehicle);
+    ok?p.poly.addTo(map):p.poly.remove();
+    p.mks.forEach(m=>ok?m.addTo(map):m.remove());
+  }});
+  buildList();
+}}
+function buildList(){{
+  const l=document.getElementById('rl');l.innerHTML='';
+  PL.forEach(p=>{{
+    const ok=(CD==='all'||p.r.day===CD)&&AV.has(p.r.vehicle);
+    if(!ok)return;
+    const d=document.createElement('div');
+    d.className='ri';d.dataset.id=p.r.id;d.style.borderLeftColor=p.r.color;
+    d.innerHTML='<div class="rid">'+p.r.id+'</div>'+
+      '<div class="rd">'+p.r.stops.length+' stops &middot; '+p.r.miles+' mi &middot; '+
+      p.r.cube+'/'+p.r.cap+' ft&#179; ('+p.r.util+'%) '+(p.r.overnight?'&#127769;':'&#9728;&#65039;')+'</div>'+
+      '<div class="rq">'+p.r.oid_seq+'</div>';
+    d.onclick=()=>{{show(p.r);map.fitBounds(p.poly.getBounds(),{{padding:[30,30]}});}};
+    l.appendChild(d);
+  }});
+}}
+buildList();
+</script></body></html>"""
+
+    with open(outPath, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    print("Loading data...")
+    (orderDict, depotId, distArr, distIdx,
+     zipidToCoord, zipidToCity, zipidToState) = loadData()
+
+    ordersByDay = {d: [oid for oid, o in orderDict.items() if o["day"] == d]
+                   for d in DAYS}
+
+    print("=" * 60)
+    print("  Q2 — MIXED FLEET WITH OVERNIGHT")
+    print("=" * 60)
+
+    allVan      = {}; allSt = {}
+    weeklyTotal = 0.0; daySummary = []
+
+    for day in DAYS:
+        print(f"  Solving {day}...", end=" ", flush=True)
+        t0  = time.time()
+        res = solveDay(day, ordersByDay, orderDict, depotId, distArr, distIdx)
+        print(f"done ({time.time()-t0:.1f}s)  "
+              f"Van {res['nVan']}×{res['vanMiles']:.0f}mi  "
+              f"ST {res['nSt']}×{res['stMiles']:.0f}mi")
+        allVan[day]  = res["vanRoutes"]; allSt[day] = res["stRoutes"]
+        weeklyTotal += res["total"];     daySummary.append(res)
+
+    nVan = sum(s["nVan"] for s in daySummary)
+    nSt  = sum(s["nSt"]  for s in daySummary)
+
+    print(f"\n  Weekly : {weeklyTotal:>10,.0f} mi")
+    print(f"  Annual : {weeklyTotal*52:>10,.0f} mi")
+    print(f"  vs Q1  : {(weeklyTotal - Q1_WEEKLY_MI)/Q1_WEEKLY_MI*100:>+10.1f}%")
+    print(f"  Routes : Van {nVan}  ST {nSt}")
+
+    verifySolution(allVan, allSt, orderDict, depotId, distArr, distIdx)
+
+    print("\n  Exporting CSV...")
+    exportCsv(allVan, allSt, orderDict, depotId, distArr, distIdx,
+              zipidToCity, zipidToState,
+              os.path.join(OUTPUT_DIR, "Q2_ON_Routes.csv"))
+
+    print("  Writing solver input...")
+    exportSolverInput(allVan, allSt, os.path.join(OUTPUT_DIR, "Q2_ON_SolverInput.txt"))
+
+    print("  Plotting fleet analysis...")
+    plotFleetAnalysis(allVan, allSt, orderDict, depotId, distArr, distIdx,
+                      os.path.join(OUTPUT_DIR, "Q2_ON_Viz1_Fleet.png"))
+
+    print("  Plotting route map...")
+    plotRouteMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
+                 zipidToCoord, weeklyTotal,
+                 os.path.join(OUTPUT_DIR, "Q2_ON_Viz2_RouteMap.png"))
+
+    print("  Generating interactive map...")
+    generateMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
+                zipidToCoord, zipidToCity, weeklyTotal,
+                os.path.join(OUTPUT_DIR, "Q2_ON_Map.html"))
+
+    print(f"\n  All outputs written to: {OUTPUT_DIR}")
+    print(f"  Paste Q2_ON_SolverInput.txt into column B of Sol_Copy_Sr26.xlsm")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
