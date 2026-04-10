@@ -1,8 +1,8 @@
 """
-q2_overnight.py — Heterogeneous fleet routing for NHG Q2 (overnight allowed).
+q2_no_overnight.py — Heterogeneous fleet routing for NHG Q2 (no overnight).
 
 Builds weekly routes using Vans (3 200 ft³) and Straight Trucks (1 400 ft³)
-from DC Wilmington MA across five weekdays. Overnight routes are permitted.
+from DC Wilmington MA across five weekdays. All routes complete in one shift.
 After solving, mirrors the Excel SolutionCheck constraints and prints a
 per-route audit table. Writes the flat 0-separated OID sequence for
 direct paste into Sol_Copy_Sr26.xlsm column B.
@@ -12,15 +12,14 @@ Input:
     distances.xlsx   — ZipID-keyed distance matrix
 
 Output (output/):
-    Q2_ON_Routes.csv
-    Q2_ON_SolverInput.txt
-    Q2_ON_Viz1_Fleet.png
-    Q2_ON_Viz2_RouteMap.png
+    Q2_NOON_Routes.csv
+    Q2_NOON_SolverInput.txt
+    Q2_NOON_Viz1_Fleet.png
+    Q2_NOON_Viz2_RouteMap.png
 """
 
 import os
 import csv
-import json
 import time
 import colorsys
 import warnings
@@ -133,11 +132,7 @@ def getCap(vehicle):
 # ---------------------------------------------------------------------------
 
 def simulate(route, vehicle, orderDict, depotId, distArr, distIdx):
-    """Return feasibility, miles, overnight flag, and per-shift DOT hours.
-
-    Return-leg break is never allowed — a break there has no Day 2
-    store deliveries and does not qualify as a valid overnight route.
-    """
+    """Return feasibility and route miles. No overnight — DOT excess = infeasible."""
     cap = getCap(vehicle)
     if not route:
         return {"feasible": True, "miles": 0.0, "overnight": False,
@@ -145,61 +140,35 @@ def simulate(route, vehicle, orderDict, depotId, distArr, distIdx):
     if sum(orderDict[o]["cube"] for o in route) > cap:
         return {"feasible": False, "miles": 0.0, "overnight": False}
 
-    firstZip  = orderDict[route[0]]["zipId"]
-    clock     = WINDOW_OPEN - driveMins(depotId, firstZip, distArr, distIdx)
-    loc       = depotId
-    miles     = driveAcc = dutyAcc = driveD1 = dutyD1 = 0.0
-    overnight = False
+    firstZip = orderDict[route[0]]["zipId"]
+    clock    = WINDOW_OPEN - driveMins(depotId, firstZip, distArr, distIdx)
+    loc      = depotId
+    miles    = driveAcc = dutyAcc = 0.0
 
     for oid in route:
         dest   = orderDict[oid]["zipId"]
         legMi  = getDist(loc, dest, distArr, distIdx)
         legMin = driveMins(loc, dest, distArr, distIdx)
         ul     = unloadMins(orderDict[oid]["cube"], vehicle)
-        dLeft  = MAX_DRIVE_MIN - driveAcc
-        dyLeft = MAX_DUTY_MIN  - dutyAcc
 
-        if legMin > dLeft or legMin > dyLeft:
-            if overnight:
-                return {"feasible": False, "miles": miles, "overnight": overnight}
-            drv      = min(dLeft, dyLeft)
-            driveD1  = driveAcc + drv
-            dutyD1   = dutyAcc  + drv
-            clock   += drv + BREAK_MIN
-            miles   += (drv / 60) * SPEED_MPH
-            driveAcc = dutyAcc = 0.0
-            overnight = True
-            if clock < WINDOW_OPEN + 1440:
-                clock = WINDOW_OPEN + 1440
-            remMi  = legMi - (drv / 60) * SPEED_MPH
-            remMin = (remMi / SPEED_MPH) * 60
-            clock    += remMin; driveAcc += remMin; dutyAcc += remMin
-            miles    += remMi;  loc = dest
-            if clock > WINDOW_CLOSE + 1440:
-                return {"feasible": False, "miles": miles, "overnight": overnight}
-            clock += ul; dutyAcc += ul
-            continue
+        if legMin > MAX_DRIVE_MIN - driveAcc or legMin > MAX_DUTY_MIN - dutyAcc:
+            return {"feasible": False, "miles": miles, "overnight": False}
 
         clock    += legMin; driveAcc += legMin; dutyAcc += legMin
         miles    += legMi;  loc = dest
-        if clock > WINDOW_CLOSE + (1440 if overnight else 0):
-            return {"feasible": False, "miles": miles, "overnight": overnight}
+        if clock > WINDOW_CLOSE:
+            return {"feasible": False, "miles": miles, "overnight": False}
         clock += ul; dutyAcc += ul
 
     retMi  = getDist(loc, depotId, distArr, distIdx)
     retMin = driveMins(loc, depotId, distArr, distIdx)
     if driveAcc + retMin > MAX_DRIVE_MIN or dutyAcc + retMin > MAX_DUTY_MIN:
-        return {"feasible": False, "miles": miles, "overnight": overnight}
+        return {"feasible": False, "miles": miles, "overnight": False}
 
-    miles    += retMi; driveAcc += retMin; dutyAcc += retMin
-    driveD2   = driveAcc / 60 if overnight else 0.0
-    dutyD2    = dutyAcc  / 60 if overnight else 0.0
-    driveD1   = driveD1  / 60 if overnight else driveAcc / 60
-    dutyD1    = dutyD1   / 60 if overnight else dutyAcc  / 60
-
-    return {"feasible": True, "miles": miles, "overnight": overnight,
-            "driveD1": driveD1, "dutyD1": dutyD1,
-            "driveD2": driveD2, "dutyD2": dutyD2}
+    miles += retMi; driveAcc += retMin; dutyAcc += retMin
+    return {"feasible": True, "miles": miles, "overnight": False,
+            "driveD1": driveAcc / 60, "dutyD1": dutyAcc / 60,
+            "driveD2": 0.0, "dutyD2": 0.0}
 
 
 def getMiles(route, vehicle, orderDict, depotId, distArr, distIdx):
@@ -618,7 +587,7 @@ def plotFleetAnalysis(allVan, allSt, orderDict, depotId, distArr, distIdx, outPa
     ax2.tick_params(colors="white"); ax2.yaxis.grid(True, color="#333", ls="--", zorder=0)
     for sp in ax2.spines.values(): sp.set_color("#444")
 
-    fig.suptitle("Q2 (Overnight) — Fleet Analysis", color="white", fontsize=13, fontweight="bold")
+    fig.suptitle("Q2 (No Overnight) — Fleet Analysis", color="white", fontsize=13, fontweight="bold")
     plt.tight_layout()
     plt.savefig(outPath, dpi=150, bbox_inches="tight", facecolor="#0f1117")
     plt.close()
@@ -639,7 +608,7 @@ def plotRouteMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
     fig, axes  = plt.subplots(2, 5, figsize=(26, 11))
     fig.patch.set_facecolor("#0f1117")
     fig.suptitle(
-        f"Q2 (Overnight) Route Map  ·  Van top, ST bottom  ·  dashed = overnight  ·  "
+        f"Q2 (No Overnight) Route Map  ·  Van top, ST bottom  ·  dashed = overnight  ·  "
         f"Weekly: {weeklyTotal:,.0f} mi  ·  Annual: {weeklyTotal*52:,.0f} mi",
         color="white", fontsize=11, fontweight="bold", y=1.01)
 
@@ -692,194 +661,111 @@ def plotRouteMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
 
 def generateMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
                 zipidToCoord, zipidToCity, weeklyTotal, outPath):
-    """Write a Leaflet HTML map with CartoDB tiles — opens from any local file."""
+    """Write a folium interactive map. Requires: pip install folium."""
+    try:
+        import folium
+    except ImportError:
+        print("    folium not installed — run: pip install folium")
+        return
+
     depotCoord = zipidToCoord[depotId]
 
-    def cityOnly(oid):
-        return zipidToCity.get(orderDict[oid]["zipId"], "?")
+    fmap = folium.Map(
+        location=[depotCoord[0], depotCoord[1]],
+        zoom_start=7,
+        tiles="CartoDB dark_matter",
+    )
 
-    def oidSeq(route):
-        return "0 → " + " → ".join(str(o) for o in route) + " → 0"
+    folium.Marker(
+        location=[depotCoord[0], depotCoord[1]],
+        tooltip="DC — Wilmington, MA (Depot)",
+        icon=folium.Icon(color="orange", icon="star"),
+    ).add_to(fmap)
 
-    routes = []
+    # one FeatureGroup per day so the layer control works
+    dayGroups = {d: folium.FeatureGroup(name=d, show=True) for d in DAYS}
+
     for day in DAYS:
         for ri, route in enumerate(allVan[day]):
             res  = simulate(route, "van", orderDict, depotId, distArr, distIdx)
             cube = sum(orderDict[o]["cube"] for o in route)
-            coords = [[depotCoord[1], depotCoord[0]]]
+            util = round(cube / VAN_CAP * 100, 1)
+            col  = DAY_COLORS[day]["van"]
+            path = [[depotCoord[0], depotCoord[1]]]
             for o in route:
                 c = zipidToCoord.get(orderDict[o]["zipId"])
-                if c: coords.append([c[1], c[0]])
-            coords.append([depotCoord[1], depotCoord[0]])
-            routes.append({
-                "id": f"{day} Van R{ri+1}", "day": day, "vehicle": "Van",
-                "color": DAY_COLORS[day]["van"], "coords": coords,
-                "overnight": res["overnight"], "miles": round(res["miles"], 1),
-                "cube": cube, "cap": VAN_CAP, "util": round(cube / VAN_CAP * 100, 1),
-                "oid_seq": oidSeq(route),
-                "stops": [{"seq": i+1, "oid": o, "city": cityOnly(o),
-                           "cube": orderDict[o]["cube"],
-                           "lat": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[0],
-                           "lon": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[1]}
-                          for i, o in enumerate(route)],
-            })
+                if c: path.append([c[0], c[1]])
+            path.append([depotCoord[0], depotCoord[1]])
+
+            lStyle = {"color": col, "weight": 3,
+                      "dashArray": "8 5" if res["overnight"] else None,
+                      "opacity": 0.85}
+            tip = (f"<b>{day} Van R{ri+1}</b><br>"
+                   f"{len(route)} stops · {res['miles']:.0f} mi<br>"
+                   f"{cube}/{VAN_CAP} ft³ ({util}%)"
+                   + (" · 🌙 Overnight" if res["overnight"] else ""))
+            folium.PolyLine(path, tooltip=tip, **lStyle).add_to(dayGroups[day])
+
+            for seq, oid in enumerate(route):
+                coord = zipidToCoord.get(orderDict[oid]["zipId"])
+                if not coord: continue
+                city = zipidToCity.get(orderDict[oid]["zipId"], "?")
+                folium.CircleMarker(
+                    location=[coord[0], coord[1]],
+                    radius=5, color=col, fill=True,
+                    fill_color=col, fill_opacity=0.9, weight=1.5,
+                    tooltip=(f"<b>#{seq+1} OID {oid}</b><br>"
+                             f"{city}<br>{orderDict[oid]['cube']} ft³"),
+                ).add_to(dayGroups[day])
+
         for ri, route in enumerate(allSt[day]):
             res  = simulate(route, "st", orderDict, depotId, distArr, distIdx)
             cube = sum(orderDict[o]["cube"] for o in route)
-            coords = [[depotCoord[1], depotCoord[0]]]
+            util = round(cube / ST_CAP * 100, 1)
+            col  = DAY_COLORS[day]["st"]
+            path = [[depotCoord[0], depotCoord[1]]]
             for o in route:
                 c = zipidToCoord.get(orderDict[o]["zipId"])
-                if c: coords.append([c[1], c[0]])
-            coords.append([depotCoord[1], depotCoord[0]])
-            routes.append({
-                "id": f"{day} ST R{ri+1}", "day": day, "vehicle": "ST",
-                "color": DAY_COLORS[day]["st"], "coords": coords,
-                "overnight": res["overnight"], "miles": round(res["miles"], 1),
-                "cube": cube, "cap": ST_CAP, "util": round(cube / ST_CAP * 100, 1),
-                "oid_seq": oidSeq(route),
-                "stops": [{"seq": i+1, "oid": o, "city": cityOnly(o),
-                           "cube": orderDict[o]["cube"],
-                           "lat": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[0],
-                           "lon": zipidToCoord.get(orderDict[o]["zipId"], (0,0))[1]}
-                          for i, o in enumerate(route)],
-            })
+                if c: path.append([c[0], c[1]])
+            path.append([depotCoord[0], depotCoord[1]])
 
-    rj = json.dumps(routes)
-    dj = json.dumps({"lat": depotCoord[0], "lon": depotCoord[1]})
+            lStyle = {"color": col, "weight": 2,
+                      "dashArray": "8 5" if res["overnight"] else None,
+                      "opacity": 0.85}
+            tip = (f"<b>{day} ST R{ri+1}</b><br>"
+                   f"{len(route)} stops · {res['miles']:.0f} mi<br>"
+                   f"{cube}/{ST_CAP} ft³ ({util}%)"
+                   + (" · 🌙 Overnight" if res["overnight"] else ""))
+            folium.PolyLine(path, tooltip=tip, **lStyle).add_to(dayGroups[day])
 
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>NHG Q2 Route Map</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:Arial,sans-serif;background:#0f1117;color:#fff;display:flex;height:100vh;overflow:hidden}}
-#sidebar{{width:300px;min-width:300px;background:#1e2130;overflow-y:auto;padding:10px;border-right:1px solid #333}}
-#map{{flex:1}}
-h2{{color:#4db8e8;font-size:13px;margin-bottom:8px}}
-.sum{{background:#252840;border-radius:5px;padding:9px;margin-bottom:8px;font-size:11px;line-height:1.8}}
-.sum b{{color:#fff}}.sum span{{color:#aaa}}
-.frow{{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px}}
-.fb{{padding:3px 8px;border-radius:4px;border:1px solid #444;background:#252840;color:#fff;cursor:pointer;font-size:10px}}
-.fb.on{{border-color:#4db8e8;background:#1a3a5c}}
-.leg{{background:#252840;border-radius:5px;padding:7px;margin-bottom:8px;font-size:10px}}
-.lr{{display:flex;align-items:center;gap:5px;margin-bottom:2px}}
-.ld{{width:11px;height:11px;border-radius:50%;flex-shrink:0}}
-.ri{{background:#252840;border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;border-left:4px solid #444;font-size:10px}}
-.ri:hover{{background:#2e3350}}.ri.sel{{background:#2e3350;border-color:#4db8e8}}
-.rid{{font-weight:bold;font-size:11px}}.rd{{color:#aaa;margin-top:1px}}
-.rq{{color:#6af;font-size:9px;margin-top:2px;word-break:break-all}}
-#ip{{position:absolute;bottom:16px;right:16px;background:rgba(15,17,23,.95);padding:12px 14px;
-     border-radius:8px;border:1px solid #333;font-size:11px;max-width:320px;
-     z-index:1000;display:none;max-height:55vh;overflow-y:auto}}
-#ip h3{{color:#4db8e8;margin-bottom:5px;font-size:12px}}
-.cl{{float:right;cursor:pointer;color:#888}}
-</style></head>
-<body>
-<div id="sidebar">
-  <h2>&#x1F69A; NHG Q2 — Route Map (Overnight)</h2>
-  <div class="sum">
-    <span>Weekly:</span> <b>{weeklyTotal:,.0f} mi</b><br>
-    <span>Annual:</span> <b>{weeklyTotal*52:,.0f} mi</b>
-  </div>
-  <div class="leg">
-    {''.join(f'<div class="lr"><div class="ld" style="background:{DAY_COLORS[d]["van"]}"></div><span>{d} Van</span><div style="flex:1"></div><div class="ld" style="background:{DAY_COLORS[d]["st"]};border-radius:2px"></div><span>{d} ST</span></div>' for d in DAYS)}
-    <div class="lr" style="margin-top:4px;color:#aaa;font-size:9px">solid=day &nbsp;·&nbsp; dashed=overnight</div>
-  </div>
-  <div class="frow">
-    <button class="fb on" onclick="setDay('all',this)">All</button>
-    {''.join(f'<button class="fb" onclick="setDay(`{d}`,this)">{d}</button>' for d in DAYS)}
-  </div>
-  <div class="frow">
-    <button class="fb on" id="bv" onclick="togVeh('Van',this)">Van</button>
-    <button class="fb on" id="bs" onclick="togVeh('ST',this)">ST</button>
-  </div>
-  <div id="rl"></div>
-</div>
-<div id="map"></div>
-<div id="ip">
-  <span class="cl" onclick="this.parentNode.style.display='none'">&#x2715;</span>
-  <h3 id="it"></h3><div id="ib"></div>
-</div>
-<script>
-const R={rj}, D={dj};
-const map = L.map('map', {{center:[42.5,-71.8], zoom:7}});
-/* CartoDB dark tiles work from local files — no Referer required */
-L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png',{{
-  attribution:'&copy; OpenStreetMap &copy; CartoDB', maxZoom:19, subdomains:'abcd'
-}}).addTo(map);
-L.marker([D.lat,D.lon],{{icon:L.divIcon({{
-  html:'<div style="background:#f5a623;border:2px solid #fff;border-radius:50%;width:18px;height:18px;text-align:center;line-height:14px;font-size:14px">&#9733;</div>',
-  iconSize:[18,18],iconAnchor:[9,9]
-}})}}).addTo(map).bindPopup('<b>DC — Wilmington, MA</b>');
-const PL=[];const AV=new Set(['Van','ST']);let CD='all';
-R.forEach(r=>{{
-  const poly=L.polyline(r.coords.map(c=>[c[1],c[0]]),{{
-    color:r.color,weight:r.vehicle==='Van'?3:2,dashArray:r.overnight?'8 5':null,opacity:.88
-  }}).addTo(map);
-  poly.on('click',()=>show(r));
-  const mks=r.stops.map(s=>{{
-    const m=L.circleMarker([s.lat,s.lon],{{
-      radius:r.vehicle==='Van'?6:5,color:r.color,fillColor:r.color,fillOpacity:.9,weight:1.5
-    }}).addTo(map);
-    m.bindTooltip('<b>#'+s.seq+'</b> OID '+s.oid+'<br>'+s.city+' &middot; '+s.cube+' ft&sup3;',{{sticky:true}});
-    m.on('click',()=>show(r));return m;
-  }});
-  PL.push({{r,poly,mks}});
-}});
-function show(r){{
-  document.getElementById('it').textContent=r.id;
-  document.getElementById('ib').innerHTML=
-    '<b>Vehicle:</b> '+r.vehicle+' &nbsp;<b>Day:</b> '+r.day+
-    ' &nbsp;<b>Overnight:</b> '+(r.overnight?'Yes':'No')+'<br>'+
-    '<b>Stops:</b> '+r.stops.length+' &nbsp;<b>Miles:</b> '+r.miles+
-    ' &nbsp;<b>Cube:</b> '+r.cube+'/'+r.cap+' ft&#179; ('+r.util+'%)<br>'+
-    '<b>Sequence:</b><br><span style="color:#6af">'+r.oid_seq+'</span><hr style="border-color:#333;margin:5px 0">'+
-    r.stops.map(s=>'<span style="color:#aaa">#'+s.seq+' OID '+s.oid+' &middot; '+s.city+' &middot; '+s.cube+' ft&#179;</span>').join('<br>');
-  document.getElementById('ip').style.display='block';
-  PL.forEach(p=>{{
-    const sel=p.r.id===r.id;
-    p.poly.setStyle({{weight:sel?5:(p.r.vehicle==='Van'?3:2),opacity:sel?1:.55}});
-    document.querySelectorAll('.ri').forEach(e=>e.classList.toggle('sel',e.dataset.id===r.id));
-  }});
-}}
-function setDay(d,btn){{
-  CD=d;
-  document.querySelectorAll('.fb').forEach(b=>{{
-    if(['All','Mon','Tue','Wed','Thu','Fri'].includes(b.textContent))
-      b.classList.toggle('on',b===btn);
-  }});
-  filt();
-}}
-function togVeh(v,btn){{AV.has(v)?AV.delete(v):AV.add(v);btn.classList.toggle('on',AV.has(v));filt();}}
-function filt(){{
-  PL.forEach(p=>{{
-    const ok=(CD==='all'||p.r.day===CD)&&AV.has(p.r.vehicle);
-    ok?p.poly.addTo(map):p.poly.remove();
-    p.mks.forEach(m=>ok?m.addTo(map):m.remove());
-  }});
-  buildList();
-}}
-function buildList(){{
-  const l=document.getElementById('rl');l.innerHTML='';
-  PL.forEach(p=>{{
-    const ok=(CD==='all'||p.r.day===CD)&&AV.has(p.r.vehicle);
-    if(!ok)return;
-    const d=document.createElement('div');
-    d.className='ri';d.dataset.id=p.r.id;d.style.borderLeftColor=p.r.color;
-    d.innerHTML='<div class="rid">'+p.r.id+'</div>'+
-      '<div class="rd">'+p.r.stops.length+' stops &middot; '+p.r.miles+' mi &middot; '+
-      p.r.cube+'/'+p.r.cap+' ft&#179; ('+p.r.util+'%) '+(p.r.overnight?'&#127769;':'&#9728;&#65039;')+'</div>'+
-      '<div class="rq">'+p.r.oid_seq+'</div>';
-    d.onclick=()=>{{show(p.r);map.fitBounds(p.poly.getBounds(),{{padding:[30,30]}});}};
-    l.appendChild(d);
-  }});
-}}
-buildList();
-</script></body></html>"""
+            for seq, oid in enumerate(route):
+                coord = zipidToCoord.get(orderDict[oid]["zipId"])
+                if not coord: continue
+                city = zipidToCity.get(orderDict[oid]["zipId"], "?")
+                folium.CircleMarker(
+                    location=[coord[0], coord[1]],
+                    radius=4, color=col, fill=True,
+                    fill_color=col, fill_opacity=0.9, weight=1.5,
+                    tooltip=(f"<b>#{seq+1} OID {oid}</b><br>"
+                             f"{city}<br>{orderDict[oid]['cube']} ft³"),
+                ).add_to(dayGroups[day])
 
-    with open(outPath, "w", encoding="utf-8") as f:
-        f.write(html)
+    for grp in dayGroups.values():
+        grp.add_to(fmap)
+
+    folium.LayerControl(collapsed=False).add_to(fmap)
+
+    title = (f"NHG Q2 Route Map (No Overnight) · "
+             f"Weekly: {weeklyTotal:,.0f} mi · Annual: {weeklyTotal*52:,.0f} mi")
+    fmap.get_root().html.add_child(folium.Element(
+        f'<div style="position:fixed;top:10px;left:60px;z-index:1000;'
+        f'background:rgba(15,17,23,.85);color:#4db8e8;padding:8px 14px;'
+        f'border-radius:6px;font-family:Arial;font-size:13px;font-weight:bold">'
+        f'{title}</div>'
+    ))
+
+    fmap.save(outPath)
+
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +783,7 @@ def main():
                    for d in DAYS}
 
     print("=" * 60)
-    print("  Q2 — MIXED FLEET WITH OVERNIGHT")
+    print("  Q2 — MIXED FLEET NO OVERNIGHT")
     print("=" * 60)
 
     allVan      = {}; allSt = {}
@@ -926,27 +812,27 @@ def main():
     print("\n  Exporting CSV...")
     exportCsv(allVan, allSt, orderDict, depotId, distArr, distIdx,
               zipidToCity, zipidToState,
-              os.path.join(OUTPUT_DIR, "Q2_ON_Routes.csv"))
+              os.path.join(OUTPUT_DIR, "Q2_NOON_Routes.csv"))
 
     print("  Writing solver input...")
-    exportSolverInput(allVan, allSt, os.path.join(OUTPUT_DIR, "Q2_ON_SolverInput.txt"))
+    exportSolverInput(allVan, allSt, os.path.join(OUTPUT_DIR, "Q2_NOON_SolverInput.txt"))
 
     print("  Plotting fleet analysis...")
     plotFleetAnalysis(allVan, allSt, orderDict, depotId, distArr, distIdx,
-                      os.path.join(OUTPUT_DIR, "Q2_ON_Viz1_Fleet.png"))
+                      os.path.join(OUTPUT_DIR, "Q2_NOON_Viz1_Fleet.png"))
 
     print("  Plotting route map...")
     plotRouteMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
                  zipidToCoord, weeklyTotal,
-                 os.path.join(OUTPUT_DIR, "Q2_ON_Viz2_RouteMap.png"))
+                 os.path.join(OUTPUT_DIR, "Q2_NOON_Viz2_RouteMap.png"))
 
     print("  Generating interactive map...")
     generateMap(allVan, allSt, orderDict, depotId, distArr, distIdx,
                 zipidToCoord, zipidToCity, weeklyTotal,
-                os.path.join(OUTPUT_DIR, "Q2_ON_Map.html"))
+                os.path.join(OUTPUT_DIR, "Q2_NOON_Map.html"))
 
     print(f"\n  All outputs written to: {OUTPUT_DIR}")
-    print(f"  Paste Q2_ON_SolverInput.txt into column B of Sol_Copy_Sr26.xlsm")
+    print(f"  Paste Q2_NOON_SolverInput.txt into column B of Sol_Copy_Sr26.xlsm")
     print("=" * 60)
 
 
