@@ -1,0 +1,670 @@
+"""
+q3_no_overnight.py - NHG Q3: Optimised delivery schedule — no overnight routes.
+
+Relaxes the fixed weekday schedule from Q1/Q2. Each store ZIP is reassigned
+to the day that minimises total weekly route miles.
+
+  Phase 1 - Volume-weighted K-Means: cluster 123 stores into 5 day-zones.
+            Stores weighted by weekly cube so busier stores drive cluster shape.
+            Best seed (lowest route miles) is kept.
+  Phase 2 - Local search: move each store to a cheaper day.
+            Re-solves only the 2 affected days per trial for speed.
+            Uses fast CW-only routing during search, full 2-opt/or-opt at end.
+
+No overnight — all routes complete within one shift.
+
+Input:  deliveries.xlsx, distances.xlsx  (same folder as this script)
+Output: output/Q3_ON_Routes.csv, output/Q3_NOON_Routes.csv,
+        output/Q3_ON_RouteMap.html, output/Q3_NOON_RouteMap.html,
+        output/Q3_Viz_Comparison.png
+"""
+
+import os
+import csv
+import time
+import json
+import warnings
+from itertools import combinations
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import KMeans
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings("ignore")
+
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+
+VAN_CAPACITY  = 3200
+UNLOAD_RATE   = 0.03    # min per ft3
+MIN_TIME      = 30      # unload floor in minutes
+DRIVING_SPEED = 40      # mph
+WINDOW_OPEN   = 8
+WINDOW_CLOSE  = 18
+BREAK_TIME    = 10      # overnight rest hours
+MAX_DRIVING   = 11
+MAX_DUTY      = 14
+DEPOT_ZIP     = 1887
+
+DAYS    = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+N_SEEDS = 10
+Q1_MI   = 7025.0
+Q2_MI   = 7909.0
+
+DAY_COLORS = {
+    "Mon": "#E63946", "Tue": "#F4A261",
+    "Wed": "#2A9D8F", "Thu": "#457B9D", "Fri": "#9B5DE5",
+}
+
+DIST_MATRIX = None   # pandas matrix (kept for loading)
+DIST_ARR    = None   # numpy array for fast distance lookups
+DIST_IDX    = None   # zip -> array index
+
+
+def load_inputs():
+    """Load orders, distance matrix, and store coordinates from Excel."""
+    ordersRaw = pd.read_excel(os.path.join(BASE_DIR, "deliveries.xlsx"),
+                              sheet_name="OrderTable")
+    location  = pd.read_excel(os.path.join(BASE_DIR, "deliveries.xlsx"),
+                              sheet_name="LocationTable")
+    distRaw   = pd.read_excel(os.path.join(BASE_DIR, "distances.xlsx"),
+                              sheet_name="Sheet1")
+
+    orders = ordersRaw[ordersRaw["ORDERID"] != 0].copy()
+    orders["CUBE"]    = pd.to_numeric(orders["CUBE"],    errors="coerce")
+    orders["TOZIP"]   = pd.to_numeric(orders["TOZIP"],   errors="coerce")
+    orders["ORDERID"] = pd.to_numeric(orders["ORDERID"], errors="coerce")
+    orders = orders.dropna(subset=["CUBE", "TOZIP"]).copy()
+    orders["TOZIP"] = orders["TOZIP"].astype(int)
+
+    location = location.dropna(subset=["ZIPID"]).copy()
+    location["ZIP"] = pd.to_numeric(location["ZIP"], errors="coerce").astype(int)
+    location = location.rename(columns={"Y": "LAT", "X": "LON"})
+
+    distRaw = distRaw.rename(columns={"Unnamed: 0": "ZIP", "Unnamed: 1": "ZIPID"})
+    distRaw = distRaw[distRaw["ZIP"] != "Zip"].copy()
+    distRaw["ZIP"]   = pd.to_numeric(distRaw["ZIP"],   errors="coerce")
+    distRaw["ZIPID"] = pd.to_numeric(distRaw["ZIPID"], errors="coerce")
+    distRaw = distRaw.dropna(subset=["ZIP"]).set_index("ZIP")
+    distMx  = distRaw.drop(columns=["ZIPID"]).copy()
+    distMx.columns = pd.to_numeric(distMx.columns, errors="coerce")
+
+    zipCoords = {int(r["ZIP"]): (float(r["LAT"]), float(r["LON"]))
+                 for _, r in location.iterrows()}
+    zipCity   = {int(r["ZIP"]): str(r["CITY"])  for _, r in location.iterrows()}
+    zipState  = {int(r["ZIP"]): str(r["STATE"]) for _, r in location.iterrows()}
+
+    return orders, distMx, zipCoords, zipCity, zipState
+
+
+def get_distance(zip1, zip2):
+    return float(DIST_ARR[DIST_IDX[int(zip1)], DIST_IDX[int(zip2)]])
+
+
+def get_unload_time(cube):
+    """Unload hours with 30-minute floor regardless of cube size."""
+    return max(MIN_TIME, UNLOAD_RATE * cube) / 60.0
+
+
+def evaluate_route(routeList, allow_overnight=True):
+    """Simulate route and return miles, feasibility flags, and DOT hours."""
+    firstZip     = routeList[0]["TOZIP"]
+    firstDrive   = get_distance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
+    dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
+
+    currentZip  = DEPOT_ZIP
+    currentTime = dispatchTime
+    totalMiles  = totalDrive = totalUnload = totalWait = 0.0
+    totalCube   = 0
+    windowOk    = True
+    overnight   = False
+    driveShift  = dutyShift = 0.0   # reset after overnight break
+
+    for stop in routeList:
+        stopZip   = stop["TOZIP"]
+        cube      = stop["CUBE"]
+        legMi     = get_distance(currentZip, stopZip)
+        drive     = legMi / DRIVING_SPEED
+        arrival   = currentTime + drive
+        svcStart  = max(arrival, float(WINDOW_OPEN))
+        wait      = max(0.0, svcStart - arrival)
+        unload    = get_unload_time(cube)
+        departure = svcStart + unload
+
+        if driveShift + drive > MAX_DRIVING or dutyShift + drive > MAX_DUTY:
+            if not allow_overnight or overnight:
+                return {"overall_feasible": False, "capacity_ok": True,
+                        "window_ok": True, "dot_ok": False,
+                        "total_miles": totalMiles, "total_drive": totalDrive,
+                        "total_duty": totalDrive + totalUnload + totalWait,
+                        "total_cube": totalCube, "overnight": overnight}
+            driveShift = dutyShift = 0.0   # 10-hour break resets DOT counters
+            overnight  = True
+            svcStart   = max(arrival + BREAK_TIME, WINDOW_OPEN + 24)
+            departure  = svcStart + unload
+
+        timeOfDay = svcStart % 24
+        endOfSvc  = departure % 24
+        dayOk     = (WINDOW_OPEN <= timeOfDay <= WINDOW_CLOSE) and (endOfSvc <= WINDOW_CLOSE)
+        windowOk  = windowOk and dayOk
+
+        totalMiles  += legMi;  totalDrive  += drive
+        totalUnload += unload; totalWait   += wait
+        totalCube   += cube
+        driveShift  += drive;  dutyShift   += drive + unload + wait
+        currentTime  = departure; currentZip = stopZip
+
+    backMi    = get_distance(currentZip, DEPOT_ZIP)
+    backDrive = backMi / DRIVING_SPEED
+    if driveShift + backDrive > MAX_DRIVING or dutyShift + backDrive > MAX_DUTY:
+        return {"overall_feasible": False, "capacity_ok": True,
+                "window_ok": windowOk, "dot_ok": False,
+                "total_miles": totalMiles, "total_drive": totalDrive,
+                "total_duty": totalDrive + totalUnload + totalWait,
+                "total_cube": totalCube, "overnight": overnight}
+
+    totalMiles += backMi; totalDrive += backDrive
+    totalDuty   = totalDrive + totalUnload + totalWait
+    capOk       = totalCube  <= VAN_CAPACITY
+    dotOk       = totalDrive <= MAX_DRIVING and totalDuty <= MAX_DUTY
+
+    return {
+        "overall_feasible": bool(capOk and windowOk and dotOk),
+        "capacity_ok":      bool(capOk),
+        "window_ok":        bool(windowOk),
+        "dot_ok":           bool(dotOk),
+        "total_miles":      round(totalMiles,  1),
+        "total_drive":      round(totalDrive,  3),
+        "total_unload":     round(totalUnload, 3),
+        "total_duty":       round(totalDuty,   3),
+        "total_cube":       int(totalCube),
+        "overnight":        overnight,
+    }
+
+
+def compute_savings(ordersDF):
+    """CW savings s(i,j) = d(depot,i) + d(depot,j) - d(i,j), descending."""
+    recs    = ordersDF.to_dict("records")
+    savings = []
+    for a, b in combinations(recs, 2):
+        s = (get_distance(DEPOT_ZIP, a["TOZIP"])
+             + get_distance(DEPOT_ZIP, b["TOZIP"])
+             - get_distance(a["TOZIP"], b["TOZIP"]))
+        savings.append((s, int(a["ORDERID"]), int(b["ORDERID"])))
+    savings.sort(key=lambda x: x[0], reverse=True)
+    return savings
+
+
+def clarke_wright(dayOrders, allow_overnight=True):
+    """Parallel CW savings construction — merges routes highest-savings first."""
+    recs    = {int(r["ORDERID"]): r for _, r in dayOrders.iterrows()}
+    routes  = {oid: [rec] for oid, rec in recs.items()}
+    routeOf = {oid: oid for oid in recs}
+    headOf  = {oid: oid for oid in recs}
+    tailOf  = {oid: oid for oid in recs}
+
+    for s, oi, oj in compute_savings(dayOrders):
+        if s <= 0: break
+        if oi not in routeOf or oj not in routeOf: continue
+        ri = routeOf[oi]; rj = routeOf[oj]
+        if ri == rj: continue
+        rtI = routes[ri]; rtJ = routes[rj]
+        candidates = []
+        if tailOf[ri] == oi and headOf[rj] == oj: candidates.append((rtI + rtJ, ri, rj))
+        if tailOf[rj] == oj and headOf[ri] == oi: candidates.append((rtJ + rtI, rj, ri))
+        if tailOf[ri] == oi and tailOf[rj] == oj: candidates.append((rtI + rtJ[::-1], ri, rj))
+        if headOf[ri] == oi and headOf[rj] == oj: candidates.append((rtI[::-1] + rtJ, ri, rj))
+        for merged, keep, drop in candidates:
+            if evaluate_route(merged, allow_overnight)["overall_feasible"]:
+                routes[keep] = merged; del routes[drop]
+                headOf[keep] = int(merged[0]["ORDERID"])
+                tailOf[keep] = int(merged[-1]["ORDERID"])
+                for stop in merged: routeOf[int(stop["ORDERID"])] = keep
+                del headOf[drop]; del tailOf[drop]
+                break
+
+    return list(routes.values())
+
+
+def two_opt_route(route, allow_overnight=True):
+    """Reverse sub-segments until no improvement in route miles."""
+    best = route[:]; bestMiles = evaluate_route(best, allow_overnight)["total_miles"]
+    improved = True
+    while improved:
+        improved = False
+        for i in range(len(best) - 1):
+            for j in range(i + 2, len(best)):
+                trial  = best[:i] + best[i:j+1][::-1] + best[j+1:]
+                result = evaluate_route(trial, allow_overnight)
+                if result["overall_feasible"] and result["total_miles"] < bestMiles:
+                    best, bestMiles, improved = trial, result["total_miles"], True; break
+            if improved: break
+    return best
+
+
+def or_opt_route(route, allow_overnight=True):
+    """Relocate chains of 1-3 stops within the route."""
+    best = route[:]; bestMiles = evaluate_route(best, allow_overnight)["total_miles"]
+    improved = True
+    while improved:
+        improved = False
+        for chainLen in [1, 2, 3]:
+            for i in range(len(best) - chainLen + 1):
+                chain     = best[i:i+chainLen]
+                remainder = best[:i] + best[i+chainLen:]
+                for j in range(len(remainder) + 1):
+                    if j == i: continue
+                    trial  = remainder[:j] + chain + remainder[j:]
+                    result = evaluate_route(trial, allow_overnight)
+                    if result["overall_feasible"] and result["total_miles"] < bestMiles:
+                        best, bestMiles, improved = trial, result["total_miles"], True; break
+                if improved: break
+            if improved: break
+    return best
+
+
+def improve_routes(allRoutes, allow_overnight=True):
+    """Apply 2-opt then or-opt to every route in the list."""
+    improved = []
+    for route in allRoutes:
+        if len(route) >= 4: route = two_opt_route(route, allow_overnight)
+        if len(route) >= 2: route = or_opt_route(route,  allow_overnight)
+        improved.append(route)
+    return improved
+
+
+def solve_day(dayOrders, allow_overnight=True):
+    """CW + full improvement — used for final solution quality."""
+    if len(dayOrders) == 0: return []
+    return improve_routes(clarke_wright(dayOrders, allow_overnight), allow_overnight)
+
+
+def fast_solve_day(dayOrders, allow_overnight=True):
+    """CW only, no improvement — used inside local search for speed."""
+    if len(dayOrders) == 0: return []
+    return clarke_wright(dayOrders, allow_overnight)
+
+
+def weekly_miles(routesByDay, allow_overnight=True):
+    """Sum total route miles across all days."""
+    return sum(evaluate_route(r, allow_overnight)["total_miles"]
+               for routes in routesByDay.values() for r in routes)
+
+
+def volume_weighted_kmeans(orders, zipCoords, seed):
+    """
+    Cluster 123 stores into 5 day-groups weighted by weekly order volume.
+    Busier stores pull cluster centres harder — balances ft3 workload per day.
+    """
+    zipVol  = orders.groupby("TOZIP")["CUBE"].sum().to_dict()  # ft3 weight per store
+    allZips = sorted(zipVol.keys())
+    coords  = np.array([zipCoords[z] for z in allZips])
+    weights = np.array([zipVol.get(z, 1) for z in allZips], dtype=float)
+    weights /= weights.sum()   # normalised so sample_weight works correctly
+
+    km = KMeans(n_clusters=5, init="k-means++", n_init=1,
+                random_state=seed, max_iter=300)
+    km.fit(coords, sample_weight=weights)
+    return {z: DAYS[km.labels_[i]] for i, z in enumerate(allZips)}
+
+
+def local_search(orders, zipDayMap, allow_overnight=True):
+    """
+    Move each store to a cheaper day until no single move helps.
+    Re-solves only the 2 affected days per trial — not all 5 — for speed.
+    Uses fast CW-only routing so each trial is ~0.02s not ~0.5s.
+    """
+    dayRoutes = {}
+    for day in DAYS:
+        dayZips = {z for z, d in zipDayMap.items() if d == day}
+        dayRoutes[day] = fast_solve_day(
+            orders[orders["TOZIP"].isin(dayZips)].copy(), allow_overnight)
+
+    dayMi     = {d: sum(evaluate_route(r, allow_overnight)["total_miles"]
+                        for r in dayRoutes[d]) for d in DAYS}
+    bestMiles = sum(dayMi.values())
+    print(f"    Start: {bestMiles:,.0f} mi")
+
+    for iteration in range(1, 6):    # cap at 5 iterations
+        improved = False
+
+        for z in sorted(zipDayMap.keys()):
+            currentDay = zipDayMap[z]
+            if len(orders[orders["TOZIP"] == z]) == 0:
+                continue
+
+            for newDay in DAYS:
+                if newDay == currentDay: continue
+
+                zipDayMap[z] = newDay   # tentative move
+
+                srcZips  = {zz for zz, d in zipDayMap.items() if d == currentDay}
+                dstZips  = {zz for zz, d in zipDayMap.items() if d == newDay}
+                srcRts   = fast_solve_day(orders[orders["TOZIP"].isin(srcZips)].copy(), allow_overnight)
+                dstRts   = fast_solve_day(orders[orders["TOZIP"].isin(dstZips)].copy(), allow_overnight)
+                srcMi    = sum(evaluate_route(r, allow_overnight)["total_miles"] for r in srcRts)
+                dstMi    = sum(evaluate_route(r, allow_overnight)["total_miles"] for r in dstRts)
+                delta    = (srcMi + dstMi) - (dayMi[currentDay] + dayMi[newDay])
+
+                if delta < -0.5:   # accept if genuinely reduces miles
+                    dayRoutes[currentDay] = srcRts; dayRoutes[newDay] = dstRts
+                    dayMi[currentDay]     = srcMi;  dayMi[newDay]     = dstMi
+                    bestMiles            += delta
+                    improved              = True
+                    currentDay            = newDay
+                    break
+                else:
+                    zipDayMap[z] = currentDay   # revert
+
+        print(f"    Iter {iteration}: {bestMiles:,.0f} mi")
+        if not improved:
+            break
+
+    return zipDayMap
+
+
+def print_summary(routesByDay, weeklyMi, allow_overnight, label):
+    print()
+    print("=" * 60)
+    print(f"  {label}")
+    print("=" * 60)
+    print(f"  {'Day':<6} {'Routes':>6} {'Orders':>7} {'Miles':>9}")
+    print(f"  {'─'*6} {'─'*6} {'─'*7} {'─'*9}")
+    for day in DAYS:
+        nRt = len(routesByDay[day])
+        nOr = sum(len(r) for r in routesByDay[day])
+        mi  = sum(evaluate_route(r, allow_overnight)["total_miles"]
+                  for r in routesByDay[day])
+        print(f"  {day:<6} {nRt:>6} {nOr:>7} {mi:>9,.0f}")
+    totRt = sum(len(routesByDay[d]) for d in DAYS)
+    totOr = sum(len(r) for d in DAYS for r in routesByDay[d])
+    print(f"  {'─'*6} {'─'*6} {'─'*7} {'─'*9}")
+    print(f"  {'TOTAL':<6} {totRt:>6} {totOr:>7} {weeklyMi:>9,.0f}")
+    print()
+    print(f"  Weekly  : {weeklyMi:>10,.0f} mi")
+    print(f"  Annual  : {weeklyMi*52:>10,.0f} mi")
+    print(f"  vs Q1   : {weeklyMi - Q1_MI:>+10,.0f} mi/week  ({(weeklyMi-Q1_MI)/Q1_MI*100:+.1f}%)")
+    print(f"  vs Q2   : {weeklyMi - Q2_MI:>+10,.0f} mi/week")
+    print("=" * 60)
+
+
+def verify_solution(routesByDay, allow_overnight):
+    """Check all 261 orders served and all constraints satisfied."""
+    allServed = [int(s["ORDERID"]) for d in DAYS
+                 for r in routesByDay[d] for s in r]
+    ordersOk = len(allServed) == 261 and len(set(allServed)) == 261
+    capOk    = all(evaluate_route(r, allow_overnight)["capacity_ok"]  for d in DAYS for r in routesByDay[d])
+    dotOk    = all(evaluate_route(r, allow_overnight)["dot_ok"]       for d in DAYS for r in routesByDay[d])
+    winOk    = all(evaluate_route(r, allow_overnight)["window_ok"]    for d in DAYS for r in routesByDay[d])
+    feasOk   = all(evaluate_route(r, allow_overnight)["overall_feasible"] for d in DAYS for r in routesByDay[d])
+    print(f"\n  Verification:")
+    print(f"    261 orders served : {'OK' if ordersOk else 'FAIL'}")
+    print(f"    Capacity <= 3200  : {'OK' if capOk    else 'FAIL'}")
+    print(f"    DOT limits        : {'OK' if dotOk    else 'FAIL'}")
+    print(f"    Window 8am-6pm    : {'OK' if winOk    else 'FAIL'}")
+    print(f"    All feasible      : {'OK' if feasOk   else 'FAIL'}")
+    return ordersOk and capOk and dotOk and winOk and feasOk
+
+
+def export_csv(routesByDay, zipCity, zipState, allow_overnight, weeklyMi, outPath):
+    """Write one CSV row per route with OID sequence and city labels."""
+    def oidSeq(route):
+        return "0 -> " + " -> ".join(str(int(s["ORDERID"])) for s in route) + " -> 0"
+    def locSeq(route):
+        parts = ["0 (DC-Wilmington,MA)"]
+        for s in route:
+            z = int(s["TOZIP"])
+            parts.append(f"{int(s['ORDERID'])} ({zipCity.get(z,'?')}, {zipState.get(z,'?')})")
+        parts.append("0 (DC-Wilmington,MA)")
+        return " -> ".join(parts)
+
+    rows = []
+    for day in DAYS:
+        for ri, route in enumerate(routesByDay[day]):
+            res  = evaluate_route(route, allow_overnight)
+            cube = sum(int(s["CUBE"]) for s in route)
+            rows.append({
+                "Route": f"{day}_R{ri+1}", "Day": day,
+                "Stops": len(route), "Miles": round(res["total_miles"], 1),
+                "Cube_ft3": cube, "Capacity_ft3": VAN_CAPACITY,
+                "Util_Pct": round(cube / VAN_CAPACITY * 100, 1),
+                "Overnight": "Yes" if res["overnight"] else "No",
+                "Drive_h": round(res["total_drive"], 2),
+                "Duty_h":  round(res["total_duty"],  2),
+                "Feasible": res["overall_feasible"],
+                "WeeklyMiles": round(weeklyMi, 0),
+                "AnnualMiles": round(weeklyMi * 52, 0),
+                "Order_IDs": oidSeq(route),
+                "Route_Sequence": locSeq(route),
+            })
+    with open(outPath, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader(); w.writerows(rows)
+
+
+def build_map(routesByDay, zipCoords, zipCity, allow_overnight, weeklyMi, label, outPath):
+    """Write Leaflet HTML map with sidebar and day filters."""
+    import json as _json
+    depotCoord = zipCoords.get(DEPOT_ZIP, (42.56, -71.16))
+
+    def oidSeq(route):
+        return "0 -> " + " -> ".join(str(int(st["ORDERID"])) for st in route) + " -> 0"
+
+    routes_js = []
+    for day in DAYS:
+        for ri, route in enumerate(routesByDay[day]):
+            res  = evaluate_route(route, allow_overnight)
+            cube = sum(int(st["CUBE"]) for st in route)
+            coords = [[depotCoord[1], depotCoord[0]]]
+            for st in route:
+                c = zipCoords.get(int(st["TOZIP"]))
+                if c:
+                    coords.append([c[1], c[0]])
+            coords.append([depotCoord[1], depotCoord[0]])
+            routes_js.append({
+                "id": day + " R" + str(ri+1), "day": day,
+                "color": DAY_COLORS[day], "coords": coords,
+                "overnight": res["overnight"],
+                "miles": round(res["total_miles"], 1),
+                "cube": cube, "cap": VAN_CAPACITY,
+                "util": round(cube / VAN_CAPACITY * 100, 1),
+                "oid_seq": oidSeq(route),
+                "stops": [{"seq": i+1, "oid": int(st["ORDERID"]),
+                           "city": zipCity.get(int(st["TOZIP"]), "?"),
+                           "cube": int(st["CUBE"]),
+                           "lat":  zipCoords.get(int(st["TOZIP"]), (0,0))[0],
+                           "lon":  zipCoords.get(int(st["TOZIP"]), (0,0))[1]}
+                          for i, st in enumerate(route)],
+            })
+
+    rj   = _json.dumps(routes_js)
+    dlat = str(depotCoord[0])
+    dlon = str(depotCoord[1])
+    wmi  = "{:,.0f}".format(weeklyMi)
+    ami  = "{:,.0f}".format(weeklyMi * 52)
+    diff = "{:+,.0f}".format(weeklyMi - Q1_MI)
+    leg  = "".join(
+        '<div class="lr"><span class="ld" style="background:' + DAY_COLORS[d] + '"></span><span>' + d + '</span></div>'
+        for d in DAYS)
+    dbtns = "".join(
+        '<button class="fb" onclick="setDay(\'' + d + '\',this)">' + d + '</button>'
+        for d in DAYS)
+
+    css = """<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#0f1117;color:#fff;display:flex;height:100vh;overflow:hidden}
+#sb{width:300px;min-width:300px;background:#1e2130;overflow-y:auto;padding:10px;border-right:1px solid #333;display:flex;flex-direction:column;gap:8px}
+#map{flex:1}h2{color:#4db8e8;font-size:13px}
+.sum{background:#252840;border-radius:5px;padding:9px;font-size:11px;line-height:1.8}.sum b{color:#fff}.sum span{color:#aaa}
+.leg{background:#252840;border-radius:5px;padding:7px;font-size:10px}
+.lr{display:flex;align-items:center;gap:4px;margin-bottom:2px}.ld{width:11px;height:11px;border-radius:50%;flex-shrink:0;display:inline-block}
+.frow{display:flex;flex-wrap:wrap;gap:3px}.fb{padding:3px 8px;border-radius:4px;border:1px solid #444;background:#252840;color:#fff;cursor:pointer;font-size:10px}.fb.on{border-color:#4db8e8;background:#1a3a5c}
+.ri{background:#252840;border-radius:4px;padding:6px 8px;cursor:pointer;border-left:4px solid #444;font-size:10px}.ri:hover{background:#2e3350}.ri.sel{background:#2e3350;border-color:#4db8e8}
+.rid{font-weight:bold;font-size:11px}.rd{color:#aaa;margin-top:1px}.rq{color:#6af;font-size:9px;margin-top:2px;word-break:break-all}
+#rl{display:flex;flex-direction:column;gap:4px}
+#ip{position:absolute;bottom:16px;right:16px;background:rgba(15,17,23,.95);padding:12px 14px;border-radius:8px;border:1px solid #333;font-size:11px;max-width:320px;z-index:1000;display:none;max-height:55vh;overflow-y:auto}
+#ip h3{color:#4db8e8;margin-bottom:5px;font-size:12px}.cl{float:right;cursor:pointer;color:#888}.dv{border-color:#333;margin:5px 0}
+</style>"""
+
+    js = (
+        "const R=" + rj + ";"
+        + "const D={lat:" + dlat + ",lon:" + dlon + "};"
+        + """
+const map=L.map('map',{center:[D.lat,D.lon],zoom:7});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution:'&copy; OpenStreetMap &copy; CartoDB',maxZoom:19,subdomains:'abcd'}).addTo(map);
+L.marker([D.lat,D.lon],{icon:L.divIcon({html:'<div style="background:#f5a623;border:2px solid #fff;border-radius:50%;width:18px;height:18px;text-align:center;line-height:14px">*</div>',iconSize:[18,18],iconAnchor:[9,9]})}).addTo(map).bindPopup('<b>DC Wilmington MA</b>');
+const PL=[];let CD='all';
+R.forEach(r=>{const poly=L.polyline(r.coords.map(c=>[c[1],c[0]]),{color:r.color,weight:3,dashArray:r.overnight?'8 5':null,opacity:.88}).addTo(map);poly.on('click',()=>show(r));const mks=r.stops.map(s=>{const m=L.circleMarker([s.lat,s.lon],{radius:6,color:r.color,fillColor:r.color,fillOpacity:.9,weight:1.5}).addTo(map);m.bindTooltip('<b>#'+s.seq+' OID '+s.oid+'</b><br>'+s.city,{sticky:true});m.on('click',()=>show(r));return m;});PL.push({r,poly,mks});});
+function show(r){document.getElementById('it').textContent=r.id;document.getElementById('ib').innerHTML='<b>Day:</b> '+r.day+' <b>Stops:</b> '+r.stops.length+' <b>Miles:</b> '+r.miles+' <b>Util:</b> '+r.util+'%<br><b>OID Seq:</b><br><span style="color:#6af">'+r.oid_seq+'</span><hr class="dv">'+r.stops.map(s=>'<span style="color:#aaa">#'+s.seq+' OID '+s.oid+' '+s.city+' '+s.cube+' ft3</span>').join('<br>');document.getElementById('ip').style.display='block';PL.forEach(p=>{const sel=p.r.id===r.id;p.poly.setStyle({weight:sel?5:3,opacity:sel?1:.55});document.querySelectorAll('.ri').forEach(e=>e.classList.toggle('sel',e.dataset.id===r.id));});}
+function setDay(d,btn){CD=d;document.querySelectorAll('.fb').forEach(b=>{if(['All','Mon','Tue','Wed','Thu','Fri'].includes(b.textContent))b.classList.toggle('on',b===btn);});filt();}
+function filt(){PL.forEach(p=>{const ok=CD==='all'||p.r.day===CD;ok?p.poly.addTo(map):p.poly.remove();p.mks.forEach(m=>ok?m.addTo(map):m.remove());});buildList();}
+function buildList(){const l=document.getElementById('rl');l.innerHTML='';PL.forEach(p=>{const ok=CD==='all'||p.r.day===CD;if(!ok)return;const d=document.createElement('div');d.className='ri';d.dataset.id=p.r.id;d.style.borderLeftColor=p.r.color;d.innerHTML='<div class="rid">'+p.r.id+'</div><div class="rd">'+p.r.stops.length+' stops - '+p.r.miles+' mi - '+p.r.cube+'/'+p.r.cap+' ft3 ('+p.r.util+'%)</div><div class="rq">'+p.r.oid_seq+'</div>';d.onclick=()=>{show(p.r);map.fitBounds(p.poly.getBounds(),{padding:[30,30]});};l.appendChild(d);});}
+buildList();
+"""
+    )
+
+    parts = [
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">",
+        "<title>NHG " + label + "</title>",
+        "<link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\"/>",
+        "<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>",
+        css, "</head><body>",
+        '<div id="sb">',
+        '<h2>NHG ' + label + '</h2>',
+        '<div class="sum"><span>Weekly:</span> <b>' + wmi + ' mi</b><br>',
+        '<span>Annual:</span> <b>' + ami + ' mi</b><br>',
+        '<span>vs Q1:</span> <b>' + diff + ' mi/wk</b></div>',
+        '<div class="leg">' + leg + '<div class="lr" style="color:#aaa;font-size:9px">solid=day | dashed=overnight</div></div>',
+        '<div class="frow"><button class="fb on" onclick="setDay(\'all\',this)">All</button>' + dbtns + '</div>',
+        '<div id="rl"></div></div>',
+        '<div id="map"></div>',
+        '<div id="ip"><span class="cl" onclick="this.parentNode.style.display=\'none\'">X</span><h3 id="it"></h3><div id="ib"></div></div>',
+        "<script>" + js + "</script></body></html>",
+    ]
+
+    with open(outPath, "w", encoding="utf-8") as f:
+        f.write("".join(parts))
+
+
+
+def plot_comparison(weeklyOn, weeklyNoon, outPath):
+    """Bar chart comparing all Q1/Q2/Q3 scenarios."""
+    labels = ["Q1\nVans (ON)", "Q2\nMixed (ON)", "Q2\nMixed (NOON)",
+              "Q3\nOpt (ON)",  "Q3\nOpt (NOON)"]
+    values = [Q1_MI, Q2_MI, 8374, weeklyOn, weeklyNoon]
+    colors = ["#52b788", "#4db8e8", "#1565c0", "#f0a030", "#c77b17"]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    fig.patch.set_facecolor("#0f1117"); ax.set_facecolor("#0f1117")
+    bars = ax.bar(labels, values, color=colors, width=0.5, edgecolor="white", lw=0.6, zorder=3)
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+55,
+                f"{val:,.0f}\n({val*52/1e6:.2f}M/yr)",
+                ha="center", color="white", fontsize=9, fontweight="bold")
+    save = Q1_MI - weeklyOn
+    if save > 0:
+        ax.text(2.5, (Q1_MI + weeklyOn) / 2,
+                f"Schedule saves\n{save:,.0f} mi/wk\n(${save*52*0.5:,.0f}/yr)",
+                ha="center", color="#52b788", fontsize=9, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=.3", facecolor="#1e2130", edgecolor="#52b788"))
+    ax.set_ylim(0, max(values) * 1.3)
+    ax.set_ylabel("Weekly Miles", color="white")
+    ax.set_title("All Scenarios — Weekly Miles (ON=overnight allowed, NOON=no overnight)",
+                 color="white", fontweight="bold", fontsize=11)
+    ax.tick_params(colors="white")
+    ax.yaxis.grid(True, color="#333", ls="--", zorder=0)
+    for sp in ax.spines.values(): sp.set_color("#444")
+    plt.tight_layout()
+    plt.savefig(outPath, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close()
+
+
+def run_variant(orders, zipCoords, zipCity, zipState, allow_overnight, label, prefix):
+    """Run full two-phase Q3 for one overnight variant and write all outputs."""
+    print(f"\n{'='*60}")
+    print(f"  {label}")
+    print(f"{'='*60}")
+
+    print(f"\nPhase 1 - K-Means ({N_SEEDS} seeds, volume-weighted)...")
+    bestMi = float("inf"); bestMap = None; bestSeed = None
+
+    for seed in range(N_SEEDS):
+        zipDayMap   = volume_weighted_kmeans(orders, zipCoords, seed)
+        routesByDay = {}
+        for day in DAYS:
+            dayZips = {z for z, d in zipDayMap.items() if d == day}
+            routesByDay[day] = fast_solve_day(
+                orders[orders["TOZIP"].isin(dayZips)].copy(), allow_overnight)
+        mi   = weekly_miles(routesByDay, allow_overnight)
+        sday = [sum(1 for d in zipDayMap.values() if d == day) for day in DAYS]
+        print(f"  seed {seed:>2}: {mi:>7,.0f} mi  stores/day={sday}")
+        if mi < bestMi:
+            bestMi = mi; bestMap = zipDayMap.copy(); bestSeed = seed
+
+    print(f"\n  Best seed {bestSeed}: {bestMi:,.0f} mi/week")
+
+    print(f"\nPhase 2 - Local search (store-day swaps)...")
+    t0 = time.time()
+    finalMap = local_search(orders, bestMap, allow_overnight)
+    print(f"  Done in {time.time()-t0:.1f}s")
+
+    print("  Applying full route improvement to final assignment...")
+    finalRoutes = {}
+    for day in DAYS:
+        dayZips = {z for z, d in finalMap.items() if d == day}
+        finalRoutes[day] = solve_day(
+            orders[orders["TOZIP"].isin(dayZips)].copy(), allow_overnight)
+    finalMiles = weekly_miles(finalRoutes, allow_overnight)
+
+    print_summary(finalRoutes, finalMiles, allow_overnight, label)
+    verify_solution(finalRoutes, allow_overnight)
+
+    print(f"\n  Store-day assignment balance:")
+    print(f"  {'Day':<6} {'Stores':>6} {'Orders':>7} {'Volume ft3':>12}")
+    print(f"  {'─'*6} {'─'*6} {'─'*7} {'─'*12}")
+    for day in DAYS:
+        stores = sum(1 for d in finalMap.values() if d == day)
+        ords   = sum(1 for _, row in orders.iterrows() if finalMap.get(row["TOZIP"]) == day)
+        vol    = int(sum(row["CUBE"] for _, row in orders.iterrows()
+                         if finalMap.get(row["TOZIP"]) == day))
+        print(f"  {day:<6} {stores:>6} {ords:>7} {vol:>12,}")
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    export_csv(finalRoutes, zipCity, zipState, allow_overnight, finalMiles,
+               os.path.join(OUTPUT_DIR, f"{prefix}_Routes.csv"))
+    build_map(finalRoutes, zipCoords, zipCity, allow_overnight, finalMiles, label,
+              os.path.join(OUTPUT_DIR, f"{prefix}_RouteMap.html"))
+    print(f"\n  {prefix}_Routes.csv written")
+    print(f"  {prefix}_RouteMap.html written")
+
+    return finalMiles
+
+
+def main():
+    print("Loading data...")
+    orders, distMatrix, zipCoords, zipCity, zipState = load_inputs()
+    global DIST_MATRIX, DIST_ARR, DIST_IDX
+    DIST_MATRIX = distMatrix
+    zips_list   = list(distMatrix.index)
+    DIST_IDX    = {int(z): i for i, z in enumerate(zips_list)}
+    DIST_ARR    = distMatrix.values.astype(float)
+    print(f"  {len(orders)} orders  {orders['TOZIP'].nunique()} stores  {int(orders['CUBE'].sum()):,} ft3")
+
+    weeklyNoon = run_variant(orders, zipCoords, zipCity, zipState,
+                               False, "Q3 - OPTIMISED SCHEDULE (NO OVERNIGHT)", "Q3_NOON")
+
+    save = Q1_MI - weeklyNoon
+    print(f"\n{'='*60}")
+    print(f"  Q3 no-overnight: {weeklyNoon:>7,.0f} mi/week")
+    print(f"  Q1 baseline    : {Q1_MI:>7,.0f} mi/week")
+    print(f"  Saves          : {save:>7,.0f} mi/week  (${save*52*0.5:,.0f}/year)")
+    print(f"{'='*60}")
+    print(f"\n  All outputs written to: {OUTPUT_DIR}")
+
+
+if __name__ == "__main__":
+    main()
