@@ -6,7 +6,7 @@ import math
 import random
 import time
 
-from vrp_solvers.base import evaluateRoute, getDistance, DEPOT_ZIP
+from vrp_solvers.base import evaluateRoute, getDistance
 from vrp_solvers.clarkeWright import ClarkeWrightSolver
 
 SCORE_BEST     = 9   # new global best found
@@ -34,6 +34,13 @@ class ALNSSolver:
 
     def solve(self, dayOrders):
         """Seed from CW, run ALNS, return best routes found."""
+        if dayOrders.empty:
+            print("  ALNSSolver: no orders for this day, skipping.")
+            self._stats         = {"miles": 0, "routes": 0, "feasible": True, "runtime_s": 0.0}
+            self._convergence   = []
+            self._weightHistory = {}
+            return []
+
         t0 = time.time()
         random.seed(self.randomSeed)
 
@@ -56,14 +63,19 @@ class ALNSSolver:
         return self._weightHistory
 
     def _search(self, initRoutes):
+        # Nothing to search if the seed is empty
+        if not initRoutes:
+            return [], [], {}
+
         currentRoutes = [list(r) for r in initRoutes]
         bestRoutes    = [list(r) for r in initRoutes]
         currentMiles  = self._totalMiles(currentRoutes)
         bestMiles     = currentMiles
         convergence   = [bestMiles]
 
-        # SA temperature for acceptance of worse solutions
-        T           = currentMiles * 0.05
+        # Guard against zero initial miles causing a degenerate SA temperature
+        initialTemp = currentMiles * 0.05 if currentMiles > 0 else 1.0
+        T           = initialTemp
         coolingRate = 0.999
 
         destroyOps   = [self._randomRemoval, self._worstRemoval,
@@ -85,6 +97,10 @@ class ALNSSolver:
         }
 
         nStops = sum(len(r) for r in currentRoutes)
+
+        # Guard against a solution with no stops at all
+        if nStops == 0:
+            return bestRoutes, convergence, weightHistory
 
         for iteration in range(self.maxIter):
             nRemove = max(1, int(nStops * self.removeFrac))
@@ -150,10 +166,13 @@ class ALNSSolver:
         newRoutes = [list(r) for r in routes]
         flatStops = [(ri, pi) for ri, r in enumerate(newRoutes) for pi in range(len(r))]
 
-        if len(flatStops) <= nRemove:
+        if not flatStops:
             return newRoutes, []
 
-        chosen = random.sample(flatStops, nRemove)
+        # Clamp nRemove so we never ask random.sample for more items than exist
+        nRemove = min(nRemove, len(flatStops))
+
+        chosen  = random.sample(flatStops, nRemove)
         chosen.sort(reverse=True)
         removed = [newRoutes[ri].pop(pi) for ri, pi in chosen]
         newRoutes = [r for r in newRoutes if r]
@@ -165,13 +184,20 @@ class ALNSSolver:
         costs     = []
 
         for ri, route in enumerate(newRoutes):
+            # Skip single-stop routes — removing the stop would leave an empty route
+            if len(route) < 2:
+                continue
             baseMiles = evaluateRoute(route)["total_miles"]
-            for pi, stop in enumerate(route):
+            for pi in range(len(route)):
                 reduced      = route[:pi] + route[pi + 1:]
-                reducedMiles = evaluateRoute(reduced)["total_miles"] if reduced else 0
+                reducedMiles = evaluateRoute(reduced)["total_miles"]
                 costs.append((baseMiles - reducedMiles, ri, pi))
 
+        if not costs:
+            return newRoutes, []
+
         costs.sort(reverse=True)
+        nRemove  = min(nRemove, len(costs))
         toRemove = sorted(costs[:nRemove], key=lambda x: (x[1], x[2]), reverse=True)
         removed  = [newRoutes[ri].pop(pi) for _, ri, pi in toRemove]
         newRoutes = [r for r in newRoutes if r]
@@ -189,7 +215,7 @@ class ALNSSolver:
             return newRoutes, []
 
         seedRi, seedPi = random.choice(flatStops)
-        seedZip  = newRoutes[seedRi][seedPi]["TOZIP"]
+        seedZip = newRoutes[seedRi][seedPi]["TOZIP"]
 
         others = [
             (ri, pi) for ri, pi in flatStops
@@ -197,7 +223,9 @@ class ALNSSolver:
         ]
         others.sort(key=lambda x: getDistance(seedZip, newRoutes[x[0]][x[1]]["TOZIP"]))
 
-        chosen = [(seedRi, seedPi)] + others[:nRemove - 1]
+        # Clamp so we never try to remove more stops than exist
+        nRemove = min(nRemove, len(flatStops))
+        chosen  = [(seedRi, seedPi)] + others[:nRemove - 1]
         chosen.sort(reverse=True)
         removed = [newRoutes[ri].pop(pi) for ri, pi in chosen]
         newRoutes = [r for r in newRoutes if r]
@@ -237,6 +265,9 @@ class ALNSSolver:
             if bestRi >= 0:
                 newRoutes[bestRi].insert(bestPos, stop)
             else:
+                # No feasible position in any existing route — open a new single-stop route
+                print(f"  ALNSSolver._greedyInsertion: order {int(stop['ORDERID'])} "
+                      f"could not be inserted feasibly; opening new route.")
                 newRoutes.append([stop])
 
         return newRoutes
@@ -252,7 +283,9 @@ class ALNSSolver:
         while pending:
             regrets = []
 
-            for stop in pending:
+            # Track pendingIdx so we can pop by position — stops are pandas Series,
+            # and list.remove() uses == which returns a Series rather than a bool
+            for pendingIdx, stop in enumerate(pending):
                 insertCosts = []
                 for ri, route in enumerate(newRoutes):
                     base = evaluateRoute(route)["total_miles"] if route else 0
@@ -265,28 +298,35 @@ class ALNSSolver:
                 insertCosts.sort(key=lambda x: x[0])
 
                 if not insertCosts:
-                    regrets.append((float("inf"), stop, -1, -1))
+                    regrets.append((float("inf"), pendingIdx, stop, -1, -1))
                 elif len(insertCosts) < k:
-                    regrets.append((0, stop, insertCosts[0][1], insertCosts[0][2]))
+                    regrets.append((0, pendingIdx, stop, insertCosts[0][1], insertCosts[0][2]))
                 else:
                     regret = insertCosts[k - 1][0] - insertCosts[0][0]
-                    regrets.append((regret, stop, insertCosts[0][1], insertCosts[0][2]))
+                    regrets.append((regret, pendingIdx, stop, insertCosts[0][1], insertCosts[0][2]))
 
             regrets.sort(key=lambda x: x[0], reverse=True)
-            _, stop, ri, pos = regrets[0]
-            pending.remove(stop)
+            _, bestPendingIdx, stop, ri, pos = regrets[0]
+            pending.pop(bestPendingIdx)
 
             if ri >= 0:
                 newRoutes[ri].insert(pos, stop)
             else:
+                # No feasible position found — open a new single-stop route
+                print(f"  ALNSSolver._regretInsertion: order {int(stop['ORDERID'])} "
+                      f"could not be inserted feasibly; opening new route.")
                 newRoutes.append([stop])
 
         return newRoutes
 
     def _totalMiles(self, routes):
+        if not routes:
+            return 0
         return sum(evaluateRoute(r)["total_miles"] for r in routes)
 
     def _allFeasible(self, routes):
+        if not routes:
+            return True
         return all(evaluateRoute(r)["overall_feasible"] for r in routes)
 
     def _collectStats(self, routes, elapsed):

@@ -28,10 +28,16 @@ class SimulatedAnnealingSolver:
 
     def solve(self, dayOrders):
         """Seed from CW, run SA, return best routes found."""
+        if dayOrders.empty:
+            print("  SimulatedAnnealingSolver: no orders for this day, skipping.")
+            self._stats       = {"miles": 0, "routes": 0, "feasible": True, "runtime_s": 0.0}
+            self._convergence = []
+            return []
+
         t0 = time.time()
         random.seed(self.randomSeed)
 
-        seed   = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True).solve(dayOrders)
+        seed             = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True).solve(dayOrders)
         routes, convergence = self._search(seed)
 
         self._convergence = convergence
@@ -45,11 +51,19 @@ class SimulatedAnnealingSolver:
         return self._convergence
 
     def _search(self, initRoutes):
+        # Nothing to search if the seed is empty
+        if not initRoutes:
+            return [], []
+
         currentRoutes = [list(r) for r in initRoutes]
         bestRoutes    = [list(r) for r in initRoutes]
         currentMiles  = self._totalMiles(currentRoutes)
         bestMiles     = currentMiles
         convergence   = [bestMiles]
+
+        # Guard against zero initial miles causing a degenerate temperature
+        if currentMiles == 0:
+            return bestRoutes, convergence
 
         coolingRate = (self.tempEnd / self.tempStart) ** (1.0 / self.maxIter)
         T           = self.tempStart
@@ -88,12 +102,18 @@ class SimulatedAnnealingSolver:
             for pi in range(len(route))
         ]
 
+        # Need at least two stops to make a meaningful relocation
         if len(flatStops) < 2:
             return newRoutes
 
         ri, pi = random.choice(flatStops)
         stop   = newRoutes[ri].pop(pi)
         newRoutes = [r for r in newRoutes if r]
+
+        # Guard against all routes becoming empty after filtering
+        if not newRoutes:
+            newRoutes.append([stop])
+            return newRoutes
 
         rj  = random.randint(0, len(newRoutes) - 1)
         pos = random.randint(0, len(newRoutes[rj]))
@@ -102,9 +122,13 @@ class SimulatedAnnealingSolver:
         return newRoutes
 
     def _totalMiles(self, routes):
+        if not routes:
+            return 0
         return sum(evaluateRoute(r)["total_miles"] for r in routes)
 
     def _allFeasible(self, routes):
+        if not routes:
+            return True
         return all(evaluateRoute(r)["overall_feasible"] for r in routes)
 
     def _collectStats(self, routes, elapsed):

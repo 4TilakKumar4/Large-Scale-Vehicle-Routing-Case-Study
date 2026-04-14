@@ -36,17 +36,41 @@ def loadInputs():
     """Read cleaned orders and distance matrix from data/."""
     global ORDERS, DIST_MATRIX
 
-    orders = pd.read_csv(os.path.join(DATA_DIR, "orders_clean.csv"))
+    ordersPath = os.path.join(DATA_DIR, "orders_clean.csv")
+    distPath   = os.path.join(DATA_DIR, "distance_matrix.csv")
+
+    # Catch missing data/ files with a clear message — the most common cause
+    # is running a solver before VRP_DataAnalysis.py has been executed
+    try:
+        orders = pd.read_csv(ordersPath)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"orders_clean.csv not found at {ordersPath}\n"
+            "Run VRP_DataAnalysis.py first to generate the data/ directory."
+        )
+
+    try:
+        distMatrix = pd.read_csv(distPath, index_col=0)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"distance_matrix.csv not found at {distPath}\n"
+            "Run VRP_DataAnalysis.py first to generate the data/ directory."
+        )
+
     orders["CUBE"]    = pd.to_numeric(orders["CUBE"],    errors="raise")
     orders["FROMZIP"] = pd.to_numeric(orders["FROMZIP"], errors="raise")
     orders["TOZIP"]   = pd.to_numeric(orders["TOZIP"],   errors="raise")
     orders["ORDERID"] = pd.to_numeric(orders["ORDERID"], errors="raise")
 
-    distMatrix = pd.read_csv(
-        os.path.join(DATA_DIR, "distance_matrix.csv"), index_col=0
-    )
     distMatrix.index   = pd.to_numeric(distMatrix.index,   errors="coerce")
     distMatrix.columns = pd.to_numeric(distMatrix.columns, errors="coerce")
+
+    # Guard against a distance matrix that parsed but is effectively empty
+    if distMatrix.empty:
+        raise ValueError(
+            "distance_matrix.csv loaded but produced an empty DataFrame. "
+            "Re-run VRP_DataAnalysis.py to regenerate it."
+        )
 
     ORDERS      = orders
     DIST_MATRIX = distMatrix
@@ -55,6 +79,17 @@ def loadInputs():
 
 
 def getDistance(zip1, zip2):
+    # Guard against calling before loadInputs() has been run
+    if DIST_MATRIX is None:
+        raise RuntimeError(
+            "DIST_MATRIX is not loaded. Call loadInputs() before using getDistance()."
+        )
+
+    if zip1 not in DIST_MATRIX.index:
+        raise KeyError(f"ZIP {zip1} not found in distance matrix index.")
+    if zip2 not in DIST_MATRIX.columns:
+        raise KeyError(f"ZIP {zip2} not found in distance matrix columns.")
+
     return DIST_MATRIX.loc[zip1, zip2]
 
 
@@ -82,6 +117,12 @@ def evaluateRoute(routeList, verbose=False):
     Simulate the route and return feasibility flags and cost metrics.
     Checks three hard constraints: capacity, delivery windows, and DOT HOS.
     """
+    if not routeList:
+        raise ValueError(
+            "evaluateRoute() received an empty route list. "
+            "Routes must contain at least one stop."
+        )
+
     firstZip     = routeList[0]["TOZIP"]
     firstDrive   = getDistance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
     dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
@@ -221,6 +262,9 @@ def orOptRoute(route):
 
 def applyLocalSearch(routes):
     """Apply 2-opt then or-opt to every route; used as a shared polishing step."""
+    if not routes:
+        return routes
+
     polished = []
     for route in routes:
         if len(route) >= 4:
@@ -288,6 +332,9 @@ def _tryEliminateOneRoute(allRoutes):
 
 def consolidateRoutes(allRoutes):
     """Repeatedly eliminate routes until no further reduction is possible."""
+    if not allRoutes:
+        return allRoutes
+
     improved = True
     while improved:
         allRoutes, improved = _tryEliminateOneRoute(allRoutes)
