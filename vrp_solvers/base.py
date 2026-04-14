@@ -1,0 +1,294 @@
+"""
+vrp_solvers/base.py — Shared constants, data I/O, route evaluation, and local search
+utilities used by every solver in the package.
+
+Input  : data/orders_clean.csv, data/distance_matrix.csv (written by VRP_DataAnalysis.py)
+Exports: constants, loadInputs, evaluateRoute, twoOptRoute, orOptRoute,
+         applyLocalSearch, consolidateRoutes, and small helpers.
+"""
+
+import os
+
+import pandas as pd
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+VAN_CAPACITY  = 3200
+UNLOAD_RATE   = 0.03   # min / cubic foot
+MIN_TIME      = 30     # minutes
+DRIVING_SPEED = 40     # mph
+WINDOW_OPEN   = 8
+WINDOW_CLOSE  = 18
+BREAK_TIME    = 10     # hours
+MAX_DRIVING   = 11     # hours
+MAX_DUTY      = 14     # hours
+DEPOT_ZIP     = 1887
+
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+# Module-level globals populated by loadInputs()
+ORDERS      = None
+DIST_MATRIX = None
+
+
+def loadInputs():
+    """Read cleaned orders and distance matrix from data/."""
+    global ORDERS, DIST_MATRIX
+
+    orders = pd.read_csv(os.path.join(DATA_DIR, "orders_clean.csv"))
+    orders["CUBE"]    = pd.to_numeric(orders["CUBE"],    errors="raise")
+    orders["FROMZIP"] = pd.to_numeric(orders["FROMZIP"], errors="raise")
+    orders["TOZIP"]   = pd.to_numeric(orders["TOZIP"],   errors="raise")
+    orders["ORDERID"] = pd.to_numeric(orders["ORDERID"], errors="raise")
+
+    distMatrix = pd.read_csv(
+        os.path.join(DATA_DIR, "distance_matrix.csv"), index_col=0
+    )
+    distMatrix.index   = pd.to_numeric(distMatrix.index,   errors="coerce")
+    distMatrix.columns = pd.to_numeric(distMatrix.columns, errors="coerce")
+
+    ORDERS      = orders
+    DIST_MATRIX = distMatrix
+
+    return orders, distMatrix
+
+
+def getDistance(zip1, zip2):
+    return DIST_MATRIX.loc[zip1, zip2]
+
+
+def getUnloadTime(cube):
+    """Unload time in hours, enforcing a minimum floor of MIN_TIME minutes."""
+    return max(MIN_TIME, UNLOAD_RATE * cube) / 60.0
+
+
+def toClock(hours):
+    """Convert fractional hours to HH:MM string."""
+    h = int(hours)
+    m = int(round((hours - h) * 60))
+    if m == 60:
+        h += 1
+        m = 0
+    return f"{h:02d}:{m:02d}"
+
+
+def routeIds(route):
+    return [int(stop["ORDERID"]) for stop in route]
+
+
+def evaluateRoute(routeList, verbose=False):
+    """
+    Simulate the route and return feasibility flags and cost metrics.
+    Checks three hard constraints: capacity, delivery windows, and DOT HOS.
+    """
+    firstZip     = routeList[0]["TOZIP"]
+    firstDrive   = getDistance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
+    dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
+
+    currentZip  = DEPOT_ZIP
+    currentTime = dispatchTime
+
+    totalMiles     = 0
+    totalDrive     = 0
+    totalUnload    = 0
+    totalWait      = 0
+    totalCube      = 0
+    windowFeasible = True
+
+    if verbose:
+        print("Dispatch:", toClock(dispatchTime))
+
+    for stop in routeList:
+        stopZip      = stop["TOZIP"]
+        cube         = stop["CUBE"]
+
+        milesLeg     = getDistance(currentZip, stopZip)
+        drive        = milesLeg / DRIVING_SPEED
+        arrival      = currentTime + drive
+        serviceStart = max(arrival, WINDOW_OPEN)
+        wait         = max(0.0, WINDOW_OPEN - arrival)
+        unload       = getUnloadTime(cube)
+        departure    = serviceStart + unload
+
+        timeOfDay    = serviceStart % 24
+        endOfService = departure % 24
+        beforeClose  = (WINDOW_OPEN <= timeOfDay <= WINDOW_CLOSE) and (endOfService <= WINDOW_CLOSE)
+        windowFeasible = windowFeasible and beforeClose
+
+        if verbose:
+            print(f"  Stop {int(stop['ORDERID'])}: arrive {toClock(arrival)} | "
+                  f"start {toClock(serviceStart)} | depart {toClock(departure)} | "
+                  f"ok={beforeClose}")
+
+        totalMiles  += milesLeg
+        totalDrive  += drive
+        totalWait   += wait
+        totalUnload += unload
+        totalCube   += cube
+
+        currentTime = departure
+        currentZip  = stopZip
+
+    milesBack  = getDistance(currentZip, DEPOT_ZIP)
+    driveBack  = milesBack / DRIVING_SPEED
+    returnTime = currentTime + driveBack
+
+    totalMiles += milesBack
+    totalDrive += driveBack
+    totalDuty   = totalDrive + totalUnload + totalWait
+
+    capacityFeasible = totalCube  <= VAN_CAPACITY
+    dotFeasible      = totalDrive <= MAX_DRIVING and totalDuty <= MAX_DUTY
+    overallFeasible  = capacityFeasible and windowFeasible and dotFeasible
+
+    results = {
+        "total_miles":       int(totalMiles),
+        "total_drive":       round(float(totalDrive),  3),
+        "total_unload":      round(float(totalUnload), 3),
+        "total_wait":        round(float(totalWait),   3),
+        "total_duty":        round(float(totalDuty),   3),
+        "total_cube":        int(totalCube),
+        "return_time":       round(float(returnTime),  3),
+        "capacity_feasible": bool(capacityFeasible),
+        "window_feasible":   bool(windowFeasible),
+        "dot_feasible":      bool(dotFeasible),
+        "overall_feasible":  bool(overallFeasible),
+    }
+
+    if verbose:
+        print("Return to depot:", toClock(returnTime))
+        print("Totals:", results)
+
+    return results
+
+
+def twoOptRoute(route):
+    """2-opt intra-route improvement: reverse sub-sequences to reduce miles."""
+    bestRoute = route[:]
+    bestMiles = evaluateRoute(bestRoute)["total_miles"]
+    improved  = True
+
+    while improved:
+        improved = False
+        for i in range(len(bestRoute) - 1):
+            for j in range(i + 2, len(bestRoute)):
+                trial  = bestRoute[:i] + bestRoute[i:j + 1][::-1] + bestRoute[j + 1:]
+                result = evaluateRoute(trial)
+
+                if result["overall_feasible"] and result["total_miles"] < bestMiles:
+                    bestRoute = trial
+                    bestMiles = result["total_miles"]
+                    improved  = True
+                    break
+            if improved:
+                break
+
+    return bestRoute
+
+
+def orOptRoute(route):
+    """Or-opt: relocate chains of 1-3 stops to a cheaper position within the same route."""
+    bestRoute = route[:]
+    bestMiles = evaluateRoute(bestRoute)["total_miles"]
+    improved  = True
+
+    while improved:
+        improved = False
+        for chainLen in [1, 2, 3]:
+            for i in range(len(bestRoute) - chainLen + 1):
+                chain     = bestRoute[i:i + chainLen]
+                remainder = bestRoute[:i] + bestRoute[i + chainLen:]
+
+                for j in range(len(remainder) + 1):
+                    if j == i:
+                        continue
+                    trial  = remainder[:j] + chain + remainder[j:]
+                    result = evaluateRoute(trial)
+
+                    if result["overall_feasible"] and result["total_miles"] < bestMiles:
+                        bestRoute = trial
+                        bestMiles = result["total_miles"]
+                        improved  = True
+                        break
+                if improved:
+                    break
+            if improved:
+                break
+
+    return bestRoute
+
+
+def applyLocalSearch(routes):
+    """Apply 2-opt then or-opt to every route; used as a shared polishing step."""
+    polished = []
+    for route in routes:
+        if len(route) >= 4:
+            route = twoOptRoute(route)
+        if len(route) >= 2:
+            route = orOptRoute(route)
+        polished.append(route)
+    return polished
+
+
+def _bestRelocation(stop, routes, skipIdx):
+    """Find the cheapest feasible insertion of stop across all routes except skipIdx."""
+    bestTargetIdx  = None
+    bestNewRoute   = None
+    bestExtraMiles = float("inf")
+
+    for j, route in enumerate(routes):
+        if j == skipIdx:
+            continue
+
+        baseMiles = evaluateRoute(route)["total_miles"]
+
+        for pos in range(len(route) + 1):
+            trial  = route[:pos] + [stop] + route[pos:]
+            result = evaluateRoute(trial)
+
+            if result["overall_feasible"]:
+                extraMiles = result["total_miles"] - baseMiles
+                if extraMiles < bestExtraMiles:
+                    bestTargetIdx  = j
+                    bestNewRoute   = trial
+                    bestExtraMiles = extraMiles
+
+    return bestTargetIdx, bestNewRoute
+
+
+def _tryEliminateOneRoute(allRoutes):
+    """
+    Try to remove the smallest route by relocating all its stops into other routes.
+    Returns the updated list and a success flag.
+    """
+    routeInfos = sorted(
+        [(i, evaluateRoute(r)) for i, r in enumerate(allRoutes)],
+        key=lambda x: (x[1]["total_cube"], x[1]["total_miles"])
+    )
+
+    for removeIdx, _ in routeInfos:
+        routeToRemove = allRoutes[removeIdx]
+        newRoutes     = allRoutes.copy()
+        success       = True
+
+        for stop in routeToRemove:
+            targetIdx, newTargetRoute = _bestRelocation(stop, newRoutes, removeIdx)
+            if targetIdx is None:
+                success = False
+                break
+            newRoutes[targetIdx] = newTargetRoute
+
+        if success:
+            newRoutes.pop(removeIdx)
+            return newRoutes, True
+
+    return allRoutes, False
+
+
+def consolidateRoutes(allRoutes):
+    """Repeatedly eliminate routes until no further reduction is possible."""
+    improved = True
+    while improved:
+        allRoutes, improved = _tryEliminateOneRoute(allRoutes)
+    return allRoutes
