@@ -1,8 +1,12 @@
-import pandas as pd
+import os
 import warnings
 from itertools import combinations
 
+import pandas as pd
+
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 VAN_CAPACITY  = 3200
 UNLOAD_RATE   = 0.03   # min / cubic foot
@@ -15,14 +19,14 @@ MAX_DRIVING   = 11     # hours
 MAX_DUTY      = 14     # hours
 DEPOT_ZIP     = 1887
 
-DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+DAYS        = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 ROUTE_CACHE = {}
 
 
-def load_inputs():
+def loadInputs():
     """Read orders and distance matrix from Excel; coerce column types."""
-    orders    = pd.read_excel("deliveries.xlsx", sheet_name="OrderTable")
-    distances = pd.read_excel("distances.xlsx",  sheet_name="Sheet1")
+    orders    = pd.read_excel(os.path.join(BASE_DIR, "deliveries.xlsx"), sheet_name="OrderTable")
+    distances = pd.read_excel(os.path.join(BASE_DIR, "distances.xlsx"),  sheet_name="Sheet1")
 
     orders = orders[orders["ORDERID"] != 0].copy()
     orders["CUBE"]    = pd.to_numeric(orders["CUBE"],    errors="raise")
@@ -42,16 +46,16 @@ def load_inputs():
     return orders, distMatrix
 
 
-def get_distance(zip1, zip2):
+def getDistance(zip1, zip2):
     return DIST_MATRIX.loc[zip1, zip2]
 
 
-def get_unload_time(cube):
+def getUnloadTime(cube):
     """Unload time in hours, enforcing a minimum floor of MIN_TIME minutes."""
     return max(MIN_TIME, UNLOAD_RATE * cube) / 60.0
 
 
-def to_clock(hours):
+def toClock(hours):
     """Convert fractional hours to HH:MM string."""
     h = int(hours)
     m = int(round((hours - h) * 60))
@@ -61,41 +65,43 @@ def to_clock(hours):
     return f"{h:02d}:{m:02d}"
 
 
-def route_ids(route):
+def routeIds(route):
     return [int(stop["ORDERID"]) for stop in route]
 
-def route_key(route):
+
+def routeKey(route):
     return tuple(int(stop["ORDERID"]) for stop in route)
 
-def evaluate_route(routeList, verbose=False):
+
+def evaluateRoute(routeList, verbose=False):
     """
     Simulate the route and return feasibility flags and cost metrics.
     Checks three hard constraints: capacity, delivery windows, and DOT HOS.
     """
     if len(routeList) == 0:
         return {
-            "total_miles": 0,
-            "total_drive": 0.0,
-            "total_unload": 0.0,
-            "total_wait": 0.0,
-            "total_duty": 0.0,
-            "total_cube": 0,
-            "return_time": 0.0,
+            "total_miles":       0,
+            "total_drive":       0.0,
+            "total_unload":      0.0,
+            "total_wait":        0.0,
+            "total_duty":        0.0,
+            "total_cube":        0,
+            "return_time":       0.0,
             "capacity_feasible": True,
-            "window_feasible": True,
-            "dot_feasible": True,
-            "overall_feasible": True,
+            "window_feasible":   True,
+            "dot_feasible":      True,
+            "overall_feasible":  True,
         }
 
     cacheKey = None
     if not verbose:
-        cacheKey = route_key(routeList)
+        cacheKey = routeKey(routeList)
         cached = ROUTE_CACHE.get(cacheKey)
         if cached is not None:
             return cached
 
     firstZip     = routeList[0]["TOZIP"]
-    firstDrive   = get_distance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
+    firstDrive   = getDistance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
     dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
 
     currentZip  = DEPOT_ZIP
@@ -109,18 +115,18 @@ def evaluate_route(routeList, verbose=False):
     windowFeasible = True
 
     if verbose:
-        print("Dispatch:", to_clock(dispatchTime))
+        print("Dispatch:", toClock(dispatchTime))
 
     for stop in routeList:
-        stopZip      = stop["TOZIP"]
-        cube         = stop["CUBE"]
+        stopZip = stop["TOZIP"]
+        cube    = stop["CUBE"]
 
-        milesLeg     = get_distance(currentZip, stopZip)
+        milesLeg     = getDistance(currentZip, stopZip)
         drive        = milesLeg / DRIVING_SPEED
         arrival      = currentTime + drive
         serviceStart = max(arrival, WINDOW_OPEN)
         wait         = max(0.0, WINDOW_OPEN - arrival)
-        unload       = get_unload_time(cube)
+        unload       = getUnloadTime(cube)
         departure    = serviceStart + unload
 
         timeOfDay    = serviceStart % 24
@@ -129,8 +135,8 @@ def evaluate_route(routeList, verbose=False):
         windowFeasible = windowFeasible and beforeClose
 
         if verbose:
-            print(f"  Stop {int(stop['ORDERID'])}: arrive {to_clock(arrival)} | "
-                  f"start {to_clock(serviceStart)} | depart {to_clock(departure)} | "
+            print(f"  Stop {int(stop['ORDERID'])}: arrive {toClock(arrival)} | "
+                  f"start {toClock(serviceStart)} | depart {toClock(departure)} | "
                   f"ok={beforeClose}")
 
         totalMiles  += milesLeg
@@ -142,7 +148,7 @@ def evaluate_route(routeList, verbose=False):
         currentTime = departure
         currentZip  = stopZip
 
-    milesBack  = get_distance(currentZip, DEPOT_ZIP)
+    milesBack  = getDistance(currentZip, DEPOT_ZIP)
     driveBack  = milesBack / DRIVING_SPEED
     returnTime = currentTime + driveBack
 
@@ -176,11 +182,8 @@ def evaluate_route(routeList, verbose=False):
     return results
 
 
-def compute_savings(ordersDF):
-    """
-    Clarke-Wright savings: s(i,j) = d(depot,i) + d(depot,j) - d(i,j).
-    Returns list of (savings, orderid_i, orderid_j) sorted descending.
-    """
+def computeSavings(ordersDF):
+    """Clarke-Wright savings s(i,j) = d(depot,i) + d(depot,j) - d(i,j), sorted descending."""
     orderList = ordersDF.to_dict("records")
     savings   = []
 
@@ -188,9 +191,9 @@ def compute_savings(ordersDF):
         zipA = a["TOZIP"]
         zipB = b["TOZIP"]
         s = (
-            get_distance(DEPOT_ZIP, zipA)
-            + get_distance(DEPOT_ZIP, zipB)
-            - get_distance(zipA, zipB)
+            getDistance(DEPOT_ZIP, zipA)
+            + getDistance(DEPOT_ZIP, zipB)
+            - getDistance(zipA, zipB)
         )
         savings.append((s, int(a["ORDERID"]), int(b["ORDERID"])))
 
@@ -198,11 +201,10 @@ def compute_savings(ordersDF):
     return savings
 
 
-def clarke_wright(dayOrders):
+def clarkeWright(dayOrders):
     """
-    Parallel savings construction. Each stop starts as its own route;
-    pairs are merged in descending savings order when the merged route is feasible.
-    Only valid endpoint adjacencies are considered (tail-to-head, with reversal allowed).
+    Parallel savings construction heuristic.
+    Each stop starts as its own route; pairs are merged in descending savings order when feasible.
     """
     orderRecords = {int(row["ORDERID"]): row for _, row in dayOrders.iterrows()}
 
@@ -211,7 +213,7 @@ def clarke_wright(dayOrders):
     headOf  = {oid: oid   for oid in orderRecords}
     tailOf  = {oid: oid   for oid in orderRecords}
 
-    for s, oidI, oidJ in compute_savings(dayOrders):
+    for s, oidI, oidJ in computeSavings(dayOrders):
         if s <= 0:
             break
 
@@ -227,6 +229,7 @@ def clarke_wright(dayOrders):
         routeI = routes[ridI]
         routeJ = routes[ridJ]
 
+        # only valid endpoint adjacencies are considered (tail-to-head, with reversal allowed)
         candidates = []
         if tailOf[ridI] == oidI and headOf[ridJ] == oidJ:
             candidates.append((routeI + routeJ,       ridI, ridJ))
@@ -238,7 +241,7 @@ def clarke_wright(dayOrders):
             candidates.append((routeI[::-1] + routeJ, ridI, ridJ))
 
         for mergedRoute, keepRid, dropRid in candidates:
-            if evaluate_route(mergedRoute, verbose=False)["overall_feasible"]:
+            if evaluateRoute(mergedRoute, verbose=False)["overall_feasible"]:
                 routes[keepRid] = mergedRoute
                 del routes[dropRid]
 
@@ -255,7 +258,7 @@ def clarke_wright(dayOrders):
     return list(routes.values())
 
 
-def best_relocation(stop, routes, skipRouteIdx):
+def bestRelocation(stop, routes, skipRouteIdx):
     """Find the cheapest feasible insertion of stop across all routes except skipRouteIdx."""
     bestTargetIdx  = None
     bestNewRoute   = None
@@ -265,11 +268,11 @@ def best_relocation(stop, routes, skipRouteIdx):
         if j == skipRouteIdx:
             continue
 
-        baseMiles = evaluate_route(route, verbose=False)["total_miles"]
+        baseMiles = evaluateRoute(route, verbose=False)["total_miles"]
 
         for pos in range(len(route) + 1):
             trialRoute = route[:pos] + [stop] + route[pos:]
-            results    = evaluate_route(trialRoute, verbose=False)
+            results    = evaluateRoute(trialRoute, verbose=False)
 
             if results["overall_feasible"]:
                 extraMiles = results["total_miles"] - baseMiles
@@ -281,13 +284,13 @@ def best_relocation(stop, routes, skipRouteIdx):
     return bestTargetIdx, bestNewRoute
 
 
-def try_eliminate_one_route(allRoutes):
+def tryEliminateOneRoute(allRoutes):
     """
     Try to remove the smallest route by relocating its stops into other routes.
     Returns the updated route list and a success flag.
     """
     routeInfos = sorted(
-        [(i, evaluate_route(r, verbose=False)) for i, r in enumerate(allRoutes)],
+        [(i, evaluateRoute(r, verbose=False)) for i, r in enumerate(allRoutes)],
         key=lambda x: (x[1]["total_cube"], x[1]["total_miles"])
     )
 
@@ -297,7 +300,7 @@ def try_eliminate_one_route(allRoutes):
         success       = True
 
         for stop in routeToRemove:
-            targetIdx, newTargetRoute = best_relocation(stop, newRoutes, removeIdx)
+            targetIdx, newTargetRoute = bestRelocation(stop, newRoutes, removeIdx)
             if targetIdx is None:
                 success = False
                 break
@@ -310,18 +313,18 @@ def try_eliminate_one_route(allRoutes):
     return allRoutes, False
 
 
-def consolidate_routes(allRoutes):
+def consolidateRoutes(allRoutes):
     """Repeatedly eliminate routes until no further reduction is possible."""
     improved = True
     while improved:
-        allRoutes, improved = try_eliminate_one_route(allRoutes)
+        allRoutes, improved = tryEliminateOneRoute(allRoutes)
     return allRoutes
 
 
-def two_opt_route(route):
+def twoOptRoute(route):
     """2-opt intra-route improvement: reverse sub-sequences to reduce miles."""
     bestRoute = route[:]
-    bestMiles = evaluate_route(bestRoute, verbose=False)["total_miles"]
+    bestMiles = evaluateRoute(bestRoute, verbose=False)["total_miles"]
     improved  = True
 
     while improved:
@@ -329,7 +332,7 @@ def two_opt_route(route):
         for i in range(len(bestRoute) - 1):
             for j in range(i + 2, len(bestRoute)):
                 trial  = bestRoute[:i] + bestRoute[i:j + 1][::-1] + bestRoute[j + 1:]
-                result = evaluate_route(trial, verbose=False)
+                result = evaluateRoute(trial, verbose=False)
 
                 if result["overall_feasible"] and result["total_miles"] < bestMiles:
                     bestRoute = trial
@@ -342,10 +345,10 @@ def two_opt_route(route):
     return bestRoute
 
 
-def or_opt_route(route):
+def orOptRoute(route):
     """Or-opt: relocate chains of 1-3 stops to a cheaper position within the same route."""
     bestRoute = route[:]
-    bestMiles = evaluate_route(bestRoute, verbose=False)["total_miles"]
+    bestMiles = evaluateRoute(bestRoute, verbose=False)["total_miles"]
     improved  = True
 
     while improved:
@@ -359,7 +362,7 @@ def or_opt_route(route):
                     if j == i:
                         continue
                     trial  = remainder[:j] + chain + remainder[j:]
-                    result = evaluate_route(trial, verbose=False)
+                    result = evaluateRoute(trial, verbose=False)
 
                     if result["overall_feasible"] and result["total_miles"] < bestMiles:
                         bestRoute = trial
@@ -374,122 +377,90 @@ def or_opt_route(route):
     return bestRoute
 
 
-def improve_routes(allRoutes):
+def improveRoutes(allRoutes):
     """Apply 2-opt then or-opt to every route."""
     improved = []
     for route in allRoutes:
         if len(route) >= 4:
-            route = two_opt_route(route)
+            route = twoOptRoute(route)
         if len(route) >= 2:
-            route = or_opt_route(route)
+            route = orOptRoute(route)
         improved.append(route)
     return improved
 
-def solve_one_day(dayOrders):
-    """Run your existing construction + improvement pipeline for one day."""
+
+def solveOneDay(dayOrders):
+    """Run the full routing pipeline for one day."""
     if len(dayOrders) == 0:
         return []
 
-    routes = clarke_wright(dayOrders)
-    routes = consolidate_routes(routes)
-    routes = improve_routes(routes)
+    routes = clarkeWright(dayOrders)
+    routes = consolidateRoutes(routes)
+    routes = improveRoutes(routes)
     return routes
 
 
-def solve_schedule(orders):
-    """Solve all five weekdays using the existing routing code."""
+def solveSchedule(orders):
+    """Solve all five weekdays and return routes keyed by day."""
     routesByDay = {}
-
     for day in DAYS:
-        dayOrders = orders[orders["DayOfWeek"] == day].copy()
-        routesByDay[day] = solve_one_day(dayOrders)
-
+        dayOrders        = orders[orders["DayOfWeek"] == day].copy()
+        routesByDay[day] = solveOneDay(dayOrders)
     return routesByDay
 
 
-def get_day_stats(routesByDay):
-    """
-    Return per-day miles and route counts.
-    Route count is used as a proxy for daily drivers/equipment needed.
-    """
+def getDayStats(routesByDay):
+    """Return per-day miles and route counts; route count proxies daily driver/equipment demand."""
     stats = {}
-
     for day in DAYS:
         dayMiles = 0
         for route in routesByDay[day]:
-            dayMiles += evaluate_route(route, verbose=False)["total_miles"]
-
-        stats[day] = {
-            "routes": len(routesByDay[day]),
-            "miles": dayMiles
-        }
-
+            dayMiles += evaluateRoute(route, verbose=False)["total_miles"]
+        stats[day] = {"routes": len(routesByDay[day]), "miles": dayMiles}
     return stats
 
 
-def schedule_score(dayStats, lambda_balance=25):
-    """
-    Objective for question 3:
-      total weekly miles + penalty for uneven daily route counts.
-
-    Increase lambda_balance if you want more emphasis on stable day-by-day
-    resource requirements.
-    """
-    totalMiles = sum(dayStats[day]["miles"] for day in DAYS)
-
+def scheduleScore(dayStats, lambda_balance=25):
+    """Total weekly miles plus a penalty for uneven daily route counts."""
+    totalMiles  = sum(dayStats[day]["miles"] for day in DAYS)
     routeCounts = [dayStats[day]["routes"] for day in DAYS]
     avgRoutes   = sum(routeCounts) / len(routeCounts)
-
-    imbalancePenalty = sum((count - avgRoutes) ** 2 for count in routeCounts)
-
-    return totalMiles + lambda_balance * imbalancePenalty
+    imbalance   = sum((count - avgRoutes) ** 2 for count in routeCounts)
+    return totalMiles + lambda_balance * imbalance
 
 
-def get_visit_groups(orders, store_col="TOZIP"):
-    """
-    Build moveable groups as (store, current day).
-
-    This is better than moving an entire store across all days, because some stores
-    may have multiple weekly visits. Grouping by (store, day) preserves the number
-    of weekly visits while still allowing the assigned weekday to change.
-    """
+def getVisitGroups(orders, store_col="TOZIP"):
+    """Build moveable groups as (store, current day) to preserve weekly visit counts."""
     visitGroups = []
-
-    grouped = orders.groupby([store_col, "DayOfWeek"], sort=False)
+    grouped     = orders.groupby([store_col, "DayOfWeek"], sort=False)
 
     for (store, day), group in grouped:
         visitGroups.append({
-            "store": int(store),
-            "from_day": day,
-            "order_ids": group["ORDERID"].astype(int).tolist()
+            "store":     int(store),
+            "from_day":  day,
+            "order_ids": group["ORDERID"].astype(int).tolist(),
         })
 
     return visitGroups
 
 
-def move_visit_group(orders, order_ids, new_day):
+def moveVisitGroup(orders, order_ids, new_day):
     """Move one visit group (a set of orders) to a new weekday."""
     updated = orders.copy()
     updated.loc[updated["ORDERID"].isin(order_ids), "DayOfWeek"] = new_day
     return updated
 
-def recompute_day_stats_for_day(routes):
+
+def recomputeDayStatsForDay(routes):
     """Return route count and miles for one weekday."""
     dayMiles = 0
     for route in routes:
-        dayMiles += evaluate_route(route, verbose=False)["total_miles"]
-
-    return {
-        "routes": len(routes),
-        "miles": dayMiles
-    }
+        dayMiles += evaluateRoute(route, verbose=False)["total_miles"]
+    return {"routes": len(routes), "miles": dayMiles}
 
 
-def try_move_fast(bestOrders, bestRoutes, bestDayStats, group, newDay, lambda_balance=25):
-    """
-    Try moving one visit group to a new day.
-    Only re-solve the two affected days.
-    """
+def tryMoveFast(bestOrders, bestRoutes, bestDayStats, group, newDay, lambda_balance=25):
+    """Try moving one visit group to a new day; re-solves only the two affected days."""
     currentDay = group["from_day"]
 
     trialOrders = bestOrders.copy()
@@ -498,76 +469,67 @@ def try_move_fast(bestOrders, bestRoutes, bestDayStats, group, newDay, lambda_ba
     trialRoutes   = bestRoutes.copy()
     trialDayStats = bestDayStats.copy()
 
-    affectedDays = [currentDay, newDay]
+    for day in [currentDay, newDay]:
+        dayOrders          = trialOrders[trialOrders["DayOfWeek"] == day].copy()
+        trialRoutes[day]   = solveOneDay(dayOrders)
+        trialDayStats[day] = recomputeDayStatsForDay(trialRoutes[day])
 
-    for day in affectedDays:
-        dayOrders = trialOrders[trialOrders["DayOfWeek"] == day].copy()
-        trialRoutes[day] = solve_one_day(dayOrders)
-        trialDayStats[day] = recompute_day_stats_for_day(trialRoutes[day])
-
-    trialScore = schedule_score(trialDayStats, lambda_balance=lambda_balance)
-
+    trialScore = scheduleScore(trialDayStats, lambda_balance=lambda_balance)
     return trialOrders, trialRoutes, trialDayStats, trialScore
 
-def total_weekly_miles(dayStats):
+
+def totalWeeklyMiles(dayStats):
     return sum(dayStats[day]["miles"] for day in DAYS)
 
-def relax_delivery_days(initialOrders, store_col="TOZIP", lambda_balance=25, max_passes=10, verbose=True):
-    """
-    Faster greedy local search for question 3.
 
-    Primary goal: reduce weekly miles.
-    Secondary goal: improve day-to-day balance.
+def relaxDeliveryDays(initialOrders, store_col="TOZIP", lambda_balance=25, max_passes=10, verbose=True):
+    """
+    Greedy local search that reduces weekly miles as the primary goal while secondarily improving day-to-day route balance.
+    Accepts one improving move per pass and re-solves only the two affected days for speed.
     """
     bestOrders   = initialOrders.copy()
-    bestRoutes   = solve_schedule(bestOrders)
-    bestDayStats = get_day_stats(bestRoutes)
-    bestScore    = schedule_score(bestDayStats, lambda_balance=lambda_balance)
-    bestMiles    = total_weekly_miles(bestDayStats)
+    bestRoutes   = solveSchedule(bestOrders)
+    bestDayStats = getDayStats(bestRoutes)
+    bestScore    = scheduleScore(bestDayStats, lambda_balance=lambda_balance)
+    bestMiles    = totalWeeklyMiles(bestDayStats)
 
     acceptedMoves = []
-    passNum = 0
+    passNum       = 0
 
     while passNum < max_passes:
         passNum += 1
         improvementFound = False
 
-        visitGroups = get_visit_groups(bestOrders, store_col=store_col)
-
+        visitGroups = getVisitGroups(bestOrders, store_col=store_col)
         routeCounts = {day: bestDayStats[day]["routes"] for day in DAYS}
 
+        # prioritise moving stops off the busiest days first
         visitGroups.sort(
             key=lambda g: (-routeCounts[g["from_day"]], len(g["order_ids"]), g["store"])
         )
 
         for group in visitGroups:
-            currentDay = group["from_day"]
-
+            currentDay    = group["from_day"]
             candidateDays = [day for day in DAYS if day != currentDay]
             candidateDays.sort(key=lambda d: (routeCounts[d], d))
 
             bestLocalChoice = None
 
             for newDay in candidateDays:
-                trialOrders, trialRoutes, trialDayStats, trialScore = try_move_fast(
-                    bestOrders,
-                    bestRoutes,
-                    bestDayStats,
-                    group,
-                    newDay,
+                trialOrders, trialRoutes, trialDayStats, trialScore = tryMoveFast(
+                    bestOrders, bestRoutes, bestDayStats, group, newDay,
                     lambda_balance=lambda_balance
                 )
+                trialMiles = totalWeeklyMiles(trialDayStats)
 
-                trialMiles = total_weekly_miles(trialDayStats)
-
-                # Only consider moves that reduce miles
+                # only consider moves that reduce miles
                 if trialMiles < bestMiles:
                     if bestLocalChoice is None:
                         bestLocalChoice = (trialOrders, trialRoutes, trialDayStats, trialScore, trialMiles, newDay)
                     else:
                         _, _, _, bestLocalScore, bestLocalMiles, _ = bestLocalChoice
 
-                        # Prefer lower miles first; use score as tie-breaker
+                        # prefer lower miles first; use score as tie-breaker
                         if (trialMiles < bestLocalMiles) or (trialMiles == bestLocalMiles and trialScore < bestLocalScore):
                             bestLocalChoice = (trialOrders, trialRoutes, trialDayStats, trialScore, trialMiles, newDay)
 
@@ -575,10 +537,10 @@ def relax_delivery_days(initialOrders, store_col="TOZIP", lambda_balance=25, max
                 bestOrders, bestRoutes, bestDayStats, bestScore, bestMiles, chosenDay = bestLocalChoice
 
                 acceptedMoves.append({
-                    "store": group["store"],
+                    "store":     group["store"],
                     "order_ids": group["order_ids"],
-                    "from_day": currentDay,
-                    "to_day": chosenDay
+                    "from_day":  currentDay,
+                    "to_day":    chosenDay,
                 })
 
                 improvementFound = True
@@ -598,7 +560,8 @@ def relax_delivery_days(initialOrders, store_col="TOZIP", lambda_balance=25, max
 
     return bestOrders, bestRoutes, bestDayStats, acceptedMoves, bestScore
 
-def print_schedule_summary(title, routesByDay):
+
+def printScheduleSummary(title, routesByDay):
     """Print miles and route counts by weekday plus weekly total."""
     print(f"\n{title}")
     print("-" * 60)
@@ -609,14 +572,9 @@ def print_schedule_summary(title, routesByDay):
     for day in DAYS:
         dayMiles = 0
         for route in routesByDay[day]:
-            dayMiles += evaluate_route(route, verbose=False)["total_miles"]
-
+            dayMiles += evaluateRoute(route, verbose=False)["total_miles"]
         dayRoutes = len(routesByDay[day])
-
-        print(
-            f"{day}: routes={dayRoutes} | miles={dayMiles}"
-        )
-
+        print(f"{day}: routes={dayRoutes} | miles={dayMiles}")
         totalMiles  += dayMiles
         totalRoutes += dayRoutes
 
@@ -627,7 +585,7 @@ def print_schedule_summary(title, routesByDay):
     return totalMiles, totalRoutes
 
 
-def print_moves(acceptedMoves):
+def printMoves(acceptedMoves):
     """Print the weekday reassignments that were accepted."""
     print("\nAccepted day changes")
     print("-" * 60)
@@ -643,7 +601,8 @@ def print_moves(acceptedMoves):
             f"orders {move['order_ids']}"
         )
 
-def print_day_report(day, routes):
+
+def printDayReport(day, routes):
     """Print per-route details for one day; return (total_miles, total_orders)."""
     print(f"\n{day}")
     print("-" * 60)
@@ -651,10 +610,10 @@ def print_day_report(day, routes):
     dayTotalOrders = 0
 
     for i, route in enumerate(routes, start=1):
-        r          = evaluate_route(route, verbose=False)
+        r          = evaluateRoute(route, verbose=False)
         orderCount = len(route)
         print(
-            f"  Route {i}: {route_ids(route)} | "
+            f"  Route {i}: {routeIds(route)} | "
             f"orders={orderCount} | "
             f"miles={r['total_miles']} | cube={r['total_cube']} | "
             f"drive={r['total_drive']}h | duty={r['total_duty']}h | "
@@ -667,59 +626,57 @@ def print_day_report(day, routes):
     print(f"  {day} routes: {len(routes)} | orders: {dayTotalOrders} | total miles: {dayTotalMiles}")
     return dayTotalMiles, dayTotalOrders
 
-def check_schedule_feasibility(routesByDay):
+
+def checkScheduleFeasibility(routesByDay):
+    """Check every route in the weekly solution and report per-day and overall feasibility."""
     print("\nSchedule Feasibility Check")
     print("-" * 60)
 
-    all_feasible = True
+    allFeasible = True
 
     for day in DAYS:
         print(f"\n{day}")
-        day_feasible = True
+        dayFeasible = True
 
         for i, route in enumerate(routesByDay[day], start=1):
-            r = evaluate_route(route, verbose=False)
-
+            r = evaluateRoute(route, verbose=False)
             print(
-                f"  Route {i}: {route_ids(route)} | "
+                f"  Route {i}: {routeIds(route)} | "
                 f"cap={r['capacity_feasible']} | "
                 f"window={r['window_feasible']} | "
                 f"dot={r['dot_feasible']} | "
                 f"overall={r['overall_feasible']}"
             )
-
             if not r["overall_feasible"]:
-                day_feasible = False
-                all_feasible = False
+                dayFeasible = False
+                allFeasible = False
 
-        print(f"  {day} feasible: {day_feasible}")
+        print(f"  {day} feasible: {dayFeasible}")
 
     print("\n" + "-" * 60)
-    print(f"Weekly solution feasible: {all_feasible}")
+    print(f"Weekly solution feasible: {allFeasible}")
 
-    return all_feasible
+    return allFeasible
 
-def main_relaxed_schedule():
-    """
-    Question 3 analysis:
-    Compare the current fixed weekday schedule to a relaxed schedule.
-    """
+
+def mainRelaxedSchedule():
+    """Question 3: compare the fixed weekday schedule to a relaxed one and check feasibility."""
     print("Solving baseline schedule...")
-    baselineRoutes = solve_schedule(ORDERS)
-    print_schedule_summary("Baseline Schedule", baselineRoutes)
+    baselineRoutes = solveSchedule(ORDERS)
+    printScheduleSummary("Baseline Schedule", baselineRoutes)
 
     print("\nSearching for improved weekday assignments...")
-    relaxedOrders, relaxedRoutes, relaxedDayStats, acceptedMoves, relaxedScore = relax_delivery_days(
+    relaxedOrders, relaxedRoutes, relaxedDayStats, acceptedMoves, relaxedScore = relaxDeliveryDays(
         ORDERS,
-        store_col="TOZIP",      # using destination zip as store identifier
-        lambda_balance=25,     # increase if you want more even weekday route counts
+        store_col="TOZIP",
+        lambda_balance=25,
         max_passes=10,
-        verbose=True
+        verbose=True,
     )
 
-    print_schedule_summary("Relaxed Delivery-Day Schedule", relaxedRoutes)
-    check_schedule_feasibility(relaxedRoutes)
-    print_moves(acceptedMoves)
+    printScheduleSummary("Relaxed Delivery-Day Schedule", relaxedRoutes)
+    checkScheduleFeasibility(relaxedRoutes)
+    printMoves(acceptedMoves)
 
     print("\nFinal reassigned weekday table")
     print("-" * 60)
@@ -731,8 +688,7 @@ def main_relaxed_schedule():
     print(finalAssignments.to_string(index=False))
 
 
-
-ORDERS, DIST_MATRIX = load_inputs()
+ORDERS, DIST_MATRIX = loadInputs()
 
 if __name__ == "__main__":
-    main_relaxed_schedule()
+    mainRelaxedSchedule()
