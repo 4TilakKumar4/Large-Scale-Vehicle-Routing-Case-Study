@@ -5,11 +5,7 @@ vrp_solvers/tabuSearch.py — Tabu Search metaheuristic seeded from CW + local s
 import random
 import time
 
-from vrp_solvers.base import (
-    applyLocalSearch,
-    consolidateRoutes,
-    evaluateRoute,
-)
+from vrp_solvers.base import evaluateRoute
 from vrp_solvers.clarkeWright import ClarkeWrightSolver
 
 
@@ -23,18 +19,24 @@ class TabuSearchSolver:
     """
 
     def __init__(self, maxIter=300, tabuTenure=15, randomSeed=42):
-        self.maxIter    = maxIter
-        self.tabuTenure = tabuTenure
-        self.randomSeed = randomSeed
+        self.maxIter     = maxIter
+        self.tabuTenure  = tabuTenure
+        self.randomSeed  = randomSeed
         self._stats      = None
         self._convergence = None
 
     def solve(self, dayOrders):
         """Seed from CW, run Tabu Search, return best routes found."""
+        if dayOrders.empty:
+            print("  TabuSearchSolver: no orders for this day, skipping.")
+            self._stats      = {"miles": 0, "routes": 0, "feasible": True, "runtime_s": 0.0}
+            self._convergence = []
+            return []
+
         t0 = time.time()
         random.seed(self.randomSeed)
 
-        seed   = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True).solve(dayOrders)
+        seed             = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True).solve(dayOrders)
         routes, convergence = self._search(seed)
 
         self._convergence = convergence
@@ -48,6 +50,10 @@ class TabuSearchSolver:
         return self._convergence
 
     def _search(self, initRoutes):
+        # Nothing to search if the seed is empty
+        if not initRoutes:
+            return [], []
+
         currentRoutes = [list(r) for r in initRoutes]
         bestRoutes    = [list(r) for r in initRoutes]
         bestMiles     = self._totalMiles(bestRoutes)
@@ -55,7 +61,13 @@ class TabuSearchSolver:
         convergence   = [bestMiles]
 
         for iteration in range(self.maxIter):
-            moves    = self._generateMoves(currentRoutes)
+            moves = self._generateMoves(currentRoutes)
+
+            # No moves possible (e.g. single route with one stop)
+            if not moves:
+                convergence.append(bestMiles)
+                continue
+
             random.shuffle(moves)
 
             bestMoveMiles  = float("inf")
@@ -81,9 +93,9 @@ class TabuSearchSolver:
                 convergence.append(bestMiles)
                 continue
 
-            currentRoutes             = bestMoveRoutes
-            moveKey                   = (bestMove[0], bestMove[1], bestMove[2])
-            tabuList[moveKey]         = iteration + self.tabuTenure
+            currentRoutes         = bestMoveRoutes
+            moveKey               = (bestMove[0], bestMove[1], bestMove[2])
+            tabuList[moveKey]     = iteration + self.tabuTenure
 
             if bestMoveMiles < bestMiles:
                 bestMiles  = bestMoveMiles
@@ -97,14 +109,17 @@ class TabuSearchSolver:
         """Generate all single-stop relocations and cross-route swaps."""
         moves = []
 
-        for ri, route in enumerate(routes):
-            for pi in range(len(route)):
-                for rj in range(len(routes)):
-                    if ri == rj:
-                        continue
-                    for pos in range(len(routes[rj]) + 1):
-                        moves.append(("relocate", ri, pi, rj, pos))
+        # Relocations require at least two routes
+        if len(routes) > 1:
+            for ri, route in enumerate(routes):
+                for pi in range(len(route)):
+                    for rj in range(len(routes)):
+                        if ri == rj:
+                            continue
+                        for pos in range(len(routes[rj]) + 1):
+                            moves.append(("relocate", ri, pi, rj, pos))
 
+        # Swaps require at least two routes each with at least one stop
         for ri in range(len(routes)):
             for pi in range(len(routes[ri])):
                 for rj in range(ri + 1, len(routes)):
@@ -121,11 +136,16 @@ class TabuSearchSolver:
             _, ri, pi, rj, pos = move
             stop = newRoutes[ri].pop(pi)
             newRoutes[rj].insert(pos, stop)
+            # Filter empty routes created by the relocation
             newRoutes = [r for r in newRoutes if r]
 
         elif move[0] == "swap":
             _, ri, pi, rj, pj = move
             newRoutes[ri][pi], newRoutes[rj][pj] = newRoutes[rj][pj], newRoutes[ri][pi]
+
+        # Guard against evaluating an empty route list after filtering
+        if not newRoutes:
+            return None
 
         for r in newRoutes:
             if not evaluateRoute(r)["overall_feasible"]:
@@ -134,11 +154,13 @@ class TabuSearchSolver:
         return newRoutes
 
     def _totalMiles(self, routes):
+        if not routes:
+            return 0
         return sum(evaluateRoute(r)["total_miles"] for r in routes)
 
     def _collectStats(self, routes, elapsed):
         totalMiles  = self._totalMiles(routes)
-        allFeasible = all(evaluateRoute(r)["overall_feasible"] for r in routes)
+        allFeasible = all(evaluateRoute(r)["overall_feasible"] for r in routes) if routes else True
         return {
             "miles":     totalMiles,
             "routes":    len(routes),
