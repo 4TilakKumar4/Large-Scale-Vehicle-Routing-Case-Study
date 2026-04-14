@@ -1,0 +1,633 @@
+import pandas as pd
+import warnings
+from itertools import combinations
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+# ============================================================
+# SA1 - BEST-OF-METHODS SENSITIVITY ANALYSIS (NO OVERNIGHT)
+# Van capacity scenarios: 3000, 3500, 3800, 4200
+# ============================================================
+
+UNLOAD_RATE   = 0.03   # min / cubic foot
+MIN_TIME      = 30     # minutes
+DRIVING_SPEED = 40     # mph
+WINDOW_OPEN   = 8
+WINDOW_CLOSE  = 18
+MAX_DRIVING   = 11     # hours
+MAX_DUTY      = 14     # hours
+DEPOT_ZIP     = 1887
+
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+CAPACITY_SCENARIOS = [3000, 3500, 3800, 4200]
+
+# ------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------
+
+def normalize_day(x):
+    s = str(x).strip().lower()
+    mapping = {
+        "mon": "Mon", "monday": "Mon",
+        "tue": "Tue", "tues": "Tue", "tuesday": "Tue",
+        "wed": "Wed", "wednesday": "Wed",
+        "thu": "Thu", "thur": "Thu", "thurs": "Thu", "thursday": "Thu",
+        "fri": "Fri", "friday": "Fri",
+    }
+    return mapping.get(s, str(x).strip())
+
+def route_ids(route):
+    return [int(stop["ORDERID"]) for stop in route]
+
+def clone_routes_by_day(routes_by_day):
+    return {day: [r[:] for r in routes] for day, routes in routes_by_day.items()}
+
+# ------------------------------------------------------------
+# LOAD INPUTS
+# ------------------------------------------------------------
+
+def load_inputs():
+    orders = pd.read_excel("deliveries.xlsx", sheet_name="OrderTable")
+    distances = pd.read_excel("distances.xlsx", sheet_name="Sheet1", header=None)
+
+    # Clean orders
+    orders = orders[orders["ORDERID"] != 0].copy()
+    orders["CUBE"]    = pd.to_numeric(orders["CUBE"],    errors="raise")
+    orders["FROMZIP"] = pd.to_numeric(orders["FROMZIP"], errors="raise")
+    orders["TOZIP"]   = pd.to_numeric(orders["TOZIP"],   errors="raise")
+    orders["ORDERID"] = pd.to_numeric(orders["ORDERID"], errors="raise")
+    orders["DayOfWeek"] = orders["DayOfWeek"].apply(normalize_day)
+
+    # Build distance matrix from raw file structure
+    # Row 1, columns 2+ = column ZIPs
+    # Row 2+, column 0 = row ZIPs
+    # Row 2+, columns 2+ = distances
+    col_ids  = pd.to_numeric(distances.iloc[1, 2:], errors="coerce").dropna().astype(int).tolist()
+    row_zips = pd.to_numeric(distances.iloc[2:, 0], errors="coerce").dropna().astype(int).tolist()
+    dist_arr = distances.iloc[2:, 2:].apply(pd.to_numeric, errors="coerce").values
+
+    # Trim to matching shape
+    n_rows = len(row_zips)
+    n_cols = len(col_ids)
+    dist_arr = dist_arr[:n_rows, :n_cols]
+
+    distMatrix = pd.DataFrame(dist_arr, index=row_zips, columns=col_ids)
+
+    return orders, distMatrix
+
+# ------------------------------------------------------------
+# DISTANCE / TIME
+# ------------------------------------------------------------
+
+def get_distance(zip1, zip2):
+    return float(DIST_MATRIX.loc[int(zip1), int(zip2)])
+
+def get_unload_time(cube):
+    return max(MIN_TIME, UNLOAD_RATE * cube) / 60.0
+
+# ------------------------------------------------------------
+# ROUTE EVALUATION
+# ------------------------------------------------------------
+
+def evaluate_route(routeList, van_capacity):
+    if len(routeList) == 0:
+        return {
+            "total_miles": 0,
+            "total_drive": 0.0,
+            "total_unload": 0.0,
+            "total_wait": 0.0,
+            "total_duty": 0.0,
+            "total_cube": 0,
+            "return_time": 0.0,
+            "capacity_feasible": True,
+            "window_feasible": True,
+            "dot_feasible": True,
+            "overall_feasible": True,
+            "used_overnight": False,
+        }
+
+    firstZip     = routeList[0]["TOZIP"]
+    firstDrive   = get_distance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
+    dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
+
+    currentZip  = DEPOT_ZIP
+    currentTime = dispatchTime
+
+    totalMiles     = 0.0
+    totalDrive     = 0.0
+    totalUnload    = 0.0
+    totalWait      = 0.0
+    totalCube      = 0.0
+    windowFeasible = True
+
+    for stop in routeList:
+        stopZip      = stop["TOZIP"]
+        cube         = stop["CUBE"]
+
+        milesLeg     = get_distance(currentZip, stopZip)
+        drive        = milesLeg / DRIVING_SPEED
+        arrival      = currentTime + drive
+        serviceStart = max(arrival, WINDOW_OPEN)
+        wait         = max(0.0, WINDOW_OPEN - arrival)
+        unload       = get_unload_time(cube)
+        departure    = serviceStart + unload
+
+        timeOfDay    = serviceStart % 24
+        endOfService = departure % 24
+        beforeClose  = (WINDOW_OPEN <= timeOfDay <= WINDOW_CLOSE) and (endOfService <= WINDOW_CLOSE)
+        windowFeasible = windowFeasible and beforeClose
+
+        totalMiles  += milesLeg
+        totalDrive  += drive
+        totalWait   += wait
+        totalUnload += unload
+        totalCube   += cube
+
+        currentTime = departure
+        currentZip  = stopZip
+
+    milesBack  = get_distance(currentZip, DEPOT_ZIP)
+    driveBack  = milesBack / DRIVING_SPEED
+    returnTime = currentTime + driveBack
+
+    totalMiles += milesBack
+    totalDrive += driveBack
+    totalDuty   = totalDrive + totalUnload + totalWait
+
+    capacityFeasible = totalCube <= van_capacity
+    dotFeasible      = totalDrive <= MAX_DRIVING and totalDuty <= MAX_DUTY
+    overallFeasible  = capacityFeasible and windowFeasible and dotFeasible
+
+    return {
+        "total_miles":       int(round(totalMiles)),
+        "total_drive":       round(float(totalDrive),  3),
+        "total_unload":      round(float(totalUnload), 3),
+        "total_wait":        round(float(totalWait),   3),
+        "total_duty":        round(float(totalDuty),   3),
+        "total_cube":        int(round(totalCube)),
+        "return_time":       round(float(returnTime),  3),
+        "capacity_feasible": bool(capacityFeasible),
+        "window_feasible":   bool(windowFeasible),
+        "dot_feasible":      bool(dotFeasible),
+        "overall_feasible":  bool(overallFeasible),
+        "used_overnight":    False,
+    }
+
+# ------------------------------------------------------------
+# SAVINGS + CW
+# ------------------------------------------------------------
+
+def compute_savings(ordersDF):
+    orderList = ordersDF.to_dict("records")
+    savings   = []
+
+    for a, b in combinations(orderList, 2):
+        zipA = a["TOZIP"]
+        zipB = b["TOZIP"]
+        s = (
+            get_distance(DEPOT_ZIP, zipA)
+            + get_distance(DEPOT_ZIP, zipB)
+            - get_distance(zipA, zipB)
+        )
+        savings.append((s, int(a["ORDERID"]), int(b["ORDERID"])))
+
+    savings.sort(key=lambda x: x[0], reverse=True)
+    return savings
+
+def clarke_wright(dayOrders, van_capacity):
+    if dayOrders.empty:
+        return []
+
+    orderRecords = {int(row["ORDERID"]): row for _, row in dayOrders.iterrows()}
+
+    routes  = {oid: [rec] for oid, rec in orderRecords.items()}
+    routeOf = {oid: oid   for oid in orderRecords}
+    headOf  = {oid: oid   for oid in orderRecords}
+    tailOf  = {oid: oid   for oid in orderRecords}
+
+    for s, oidI, oidJ in compute_savings(dayOrders):
+        if s <= 0:
+            break
+
+        if oidI not in routeOf or oidJ not in routeOf:
+            continue
+
+        ridI = routeOf[oidI]
+        ridJ = routeOf[oidJ]
+
+        if ridI == ridJ:
+            continue
+
+        routeI = routes[ridI]
+        routeJ = routes[ridJ]
+
+        candidates = []
+        if tailOf[ridI] == oidI and headOf[ridJ] == oidJ:
+            candidates.append((routeI + routeJ,       ridI, ridJ))
+        if tailOf[ridJ] == oidJ and headOf[ridI] == oidI:
+            candidates.append((routeJ + routeI,       ridJ, ridI))
+        if tailOf[ridI] == oidI and tailOf[ridJ] == oidJ:
+            candidates.append((routeI + routeJ[::-1], ridI, ridJ))
+        if headOf[ridI] == oidI and headOf[ridJ] == oidJ:
+            candidates.append((routeI[::-1] + routeJ, ridI, ridJ))
+
+        for mergedRoute, keepRid, dropRid in candidates:
+            if evaluate_route(mergedRoute, van_capacity)["overall_feasible"]:
+                routes[keepRid] = mergedRoute
+                del routes[dropRid]
+
+                headOf[keepRid] = int(mergedRoute[0]["ORDERID"])
+                tailOf[keepRid] = int(mergedRoute[-1]["ORDERID"])
+
+                for stop in mergedRoute:
+                    routeOf[int(stop["ORDERID"])] = keepRid
+
+                del headOf[dropRid]
+                del tailOf[dropRid]
+                break
+
+    return list(routes.values())
+
+# ------------------------------------------------------------
+# CONSOLIDATION
+# ------------------------------------------------------------
+
+def best_relocation(stop, routes, skipRouteIdx, van_capacity):
+    bestTargetIdx  = None
+    bestNewRoute   = None
+    bestExtraMiles = float("inf")
+
+    for j, route in enumerate(routes):
+        if j == skipRouteIdx:
+            continue
+
+        baseMiles = evaluate_route(route, van_capacity)["total_miles"]
+
+        for pos in range(len(route) + 1):
+            trialRoute = route[:pos] + [stop] + route[pos:]
+            results    = evaluate_route(trialRoute, van_capacity)
+
+            if results["overall_feasible"]:
+                extraMiles = results["total_miles"] - baseMiles
+                if extraMiles < bestExtraMiles:
+                    bestTargetIdx  = j
+                    bestNewRoute   = trialRoute
+                    bestExtraMiles = extraMiles
+
+    return bestTargetIdx, bestNewRoute
+
+def try_eliminate_one_route(allRoutes, van_capacity):
+    if len(allRoutes) <= 1:
+        return allRoutes, False
+
+    routeInfos = sorted(
+        [(i, evaluate_route(r, van_capacity)) for i, r in enumerate(allRoutes)],
+        key=lambda x: (x[1]["total_cube"], x[1]["total_miles"])
+    )
+
+    for removeIdx, _ in routeInfos:
+        routeToRemove = allRoutes[removeIdx]
+        newRoutes     = allRoutes.copy()
+        success       = True
+
+        for stop in routeToRemove:
+            targetIdx, newTargetRoute = best_relocation(stop, newRoutes, removeIdx, van_capacity)
+            if targetIdx is None:
+                success = False
+                break
+            newRoutes[targetIdx] = newTargetRoute
+
+        if success:
+            newRoutes.pop(removeIdx)
+            return newRoutes, True
+
+    return allRoutes, False
+
+def consolidate_routes(allRoutes, van_capacity):
+    improved = True
+    while improved:
+        allRoutes, improved = try_eliminate_one_route(allRoutes, van_capacity)
+    return allRoutes
+
+# ------------------------------------------------------------
+# LOCAL SEARCH
+# ------------------------------------------------------------
+
+def two_opt_route(route, van_capacity):
+    if len(route) < 4:
+        return route[:]
+
+    bestRoute = route[:]
+    bestMiles = evaluate_route(bestRoute, van_capacity)["total_miles"]
+    improved  = True
+
+    while improved:
+        improved = False
+        for i in range(len(bestRoute) - 1):
+            for j in range(i + 2, len(bestRoute)):
+                trial  = bestRoute[:i] + bestRoute[i:j + 1][::-1] + bestRoute[j + 1:]
+                result = evaluate_route(trial, van_capacity)
+
+                if result["overall_feasible"] and result["total_miles"] < bestMiles:
+                    bestRoute = trial
+                    bestMiles = result["total_miles"]
+                    improved  = True
+                    break
+            if improved:
+                break
+
+    return bestRoute
+
+def or_opt_route(route, van_capacity):
+    if len(route) < 2:
+        return route[:]
+
+    bestRoute = route[:]
+    bestMiles = evaluate_route(bestRoute, van_capacity)["total_miles"]
+    improved  = True
+
+    while improved:
+        improved = False
+        for chainLen in [1, 2, 3]:
+            if chainLen > len(bestRoute):
+                continue
+            for i in range(len(bestRoute) - chainLen + 1):
+                chain     = bestRoute[i:i + chainLen]
+                remainder = bestRoute[:i] + bestRoute[i + chainLen:]
+
+                for j in range(len(remainder) + 1):
+                    if j == i:
+                        continue
+                    trial  = remainder[:j] + chain + remainder[j:]
+                    result = evaluate_route(trial, van_capacity)
+
+                    if result["overall_feasible"] and result["total_miles"] < bestMiles:
+                        bestRoute = trial
+                        bestMiles = result["total_miles"]
+                        improved  = True
+                        break
+                if improved:
+                    break
+            if improved:
+                break
+
+    return bestRoute
+
+def improve_routes(allRoutes, van_capacity, use_2opt=False, use_oropt=False):
+    improved = []
+    for route in allRoutes:
+        r = route[:]
+        if use_2opt:
+            r = two_opt_route(r, van_capacity)
+        if use_oropt:
+            r = or_opt_route(r, van_capacity)
+        improved.append(r)
+    return improved
+
+# ------------------------------------------------------------
+# METHOD CONFIGS
+# ------------------------------------------------------------
+
+METHOD_CONFIGS = [
+    {"name": "CW",                                "consolidate": False, "use_2opt": False, "use_oropt": False},
+    {"name": "CW + Consolidate",                  "consolidate": True,  "use_2opt": False, "use_oropt": False},
+    {"name": "CW + 2-opt",                        "consolidate": False, "use_2opt": True,  "use_oropt": False},
+    {"name": "CW + Or-opt",                       "consolidate": False, "use_2opt": False, "use_oropt": True},
+    {"name": "CW + 2-opt + Or-opt",               "consolidate": False, "use_2opt": True,  "use_oropt": True},
+    {"name": "CW + Consolidate + 2-opt",          "consolidate": True,  "use_2opt": True,  "use_oropt": False},
+    {"name": "CW + Consolidate + Or-opt",         "consolidate": True,  "use_2opt": False, "use_oropt": True},
+    {"name": "CW + Consolidate + 2-opt + Or-opt", "consolidate": True,  "use_2opt": True,  "use_oropt": True},
+]
+
+def build_routes_for_day(dayOrders, van_capacity, config):
+    routes = clarke_wright(dayOrders, van_capacity)
+    if config["consolidate"]:
+        routes = consolidate_routes(routes, van_capacity)
+    routes = improve_routes(
+        routes,
+        van_capacity,
+        use_2opt=config["use_2opt"],
+        use_oropt=config["use_oropt"]
+    )
+    return routes
+
+def solve_one_method_for_capacity(van_capacity, config):
+    routes_by_day = {}
+
+    for day in DAYS:
+        dayOrders = ORDERS[ORDERS["DayOfWeek"] == day].copy()
+        routes_by_day[day] = build_routes_for_day(dayOrders, van_capacity, config)
+
+    weekly_miles = 0
+    weekly_routes = 0
+    weekly_orders = 0
+    route_rows = []
+
+    for day in DAYS:
+        day_routes = routes_by_day[day]
+        for i, route in enumerate(day_routes, start=1):
+            r = evaluate_route(route, van_capacity)
+            if not r["overall_feasible"]:
+                return None
+
+            weekly_miles += r["total_miles"]
+            weekly_routes += 1
+            weekly_orders += len(route)
+
+            route_rows.append({
+                "Capacity": van_capacity,
+                "Method": config["name"],
+                "Day": day,
+                "RouteNo": i,
+                "OrderRoute": "0-" + "-".join(str(x) for x in route_ids(route)) + "-0",
+                "Orders": len(route),
+                "Miles": r["total_miles"],
+                "Cube": r["total_cube"],
+                "DriveHours": r["total_drive"],
+                "DutyHours": r["total_duty"],
+                "Feasible": r["overall_feasible"],
+                "UsedOvernight": False,
+            })
+
+    return {
+        "capacity": van_capacity,
+        "method": config["name"],
+        "weekly_miles": weekly_miles,
+        "annual_miles": weekly_miles * 52,
+        "total_routes": weekly_routes,
+        "total_orders": weekly_orders,
+        "routes_by_day": routes_by_day,
+        "route_rows": route_rows,
+    }
+
+def summarize_existing_solution(routes_by_day, van_capacity, method_name):
+    weekly_miles = 0
+    weekly_routes = 0
+    weekly_orders = 0
+    route_rows = []
+
+    for day in DAYS:
+        day_routes = routes_by_day[day]
+        for i, route in enumerate(day_routes, start=1):
+            r = evaluate_route(route, van_capacity)
+            if not r["overall_feasible"]:
+                return None
+
+            weekly_miles += r["total_miles"]
+            weekly_routes += 1
+            weekly_orders += len(route)
+
+            route_rows.append({
+                "Capacity": van_capacity,
+                "Method": method_name,
+                "Day": day,
+                "RouteNo": i,
+                "OrderRoute": "0-" + "-".join(str(x) for x in route_ids(route)) + "-0",
+                "Orders": len(route),
+                "Miles": r["total_miles"],
+                "Cube": r["total_cube"],
+                "DriveHours": r["total_drive"],
+                "DutyHours": r["total_duty"],
+                "Feasible": r["overall_feasible"],
+                "UsedOvernight": False,
+            })
+
+    return {
+        "capacity": van_capacity,
+        "method": method_name,
+        "weekly_miles": weekly_miles,
+        "annual_miles": weekly_miles * 52,
+        "total_routes": weekly_routes,
+        "total_orders": weekly_orders,
+        "routes_by_day": clone_routes_by_day(routes_by_day),
+        "route_rows": route_rows,
+    }
+
+# ------------------------------------------------------------
+# MAIN SA ENGINE
+# ------------------------------------------------------------
+
+def run_best_of_methods_sensitivity():
+    best_results = []
+    all_method_rows = []
+    all_route_rows = []
+
+    previous_best_routes = None
+
+    for cap in CAPACITY_SCENARIOS:
+        print(f"\nRunning capacity scenario: {cap}")
+        candidates = []
+
+        for config in METHOD_CONFIGS:
+            res = solve_one_method_for_capacity(cap, config)
+            if res is not None:
+                candidates.append(res)
+                all_method_rows.append({
+                    "Capacity": cap,
+                    "Method": res["method"],
+                    "WeeklyMiles": res["weekly_miles"],
+                    "AnnualMiles": res["annual_miles"],
+                    "TotalRoutes": res["total_routes"],
+                    "TotalOrders": res["total_orders"],
+                    "Feasible": True,
+                })
+                print(f"  {config['name']:<38} -> {res['weekly_miles']:>6} miles | {res['total_routes']:>3} routes")
+            else:
+                all_method_rows.append({
+                    "Capacity": cap,
+                    "Method": config["name"],
+                    "WeeklyMiles": None,
+                    "AnnualMiles": None,
+                    "TotalRoutes": None,
+                    "TotalOrders": None,
+                    "Feasible": False,
+                })
+                print(f"  {config['name']:<38} -> infeasible")
+
+        if previous_best_routes is not None:
+            prev_res = summarize_existing_solution(
+                previous_best_routes,
+                cap,
+                method_name="Previous Best Carry-Forward"
+            )
+            if prev_res is not None:
+                candidates.append(prev_res)
+                all_method_rows.append({
+                    "Capacity": cap,
+                    "Method": prev_res["method"],
+                    "WeeklyMiles": prev_res["weekly_miles"],
+                    "AnnualMiles": prev_res["annual_miles"],
+                    "TotalRoutes": prev_res["total_routes"],
+                    "TotalOrders": prev_res["total_orders"],
+                    "Feasible": True,
+                })
+                print(f"  {'Previous Best Carry-Forward':<38} -> {prev_res['weekly_miles']:>6} miles | {prev_res['total_routes']:>3} routes")
+
+        if not candidates:
+            raise RuntimeError(f"No feasible candidate found for capacity {cap}")
+
+        best = min(candidates, key=lambda x: x["weekly_miles"])
+        previous_best_routes = clone_routes_by_day(best["routes_by_day"])
+
+        best_results.append({
+            "Capacity": cap,
+            "BestMethod": best["method"],
+            "WeeklyMiles": best["weekly_miles"],
+            "AnnualMiles": best["annual_miles"],
+            "TotalRoutes": best["total_routes"],
+            "TotalOrders": best["total_orders"],
+            "OvernightRoutes": 0,
+        })
+
+        all_route_rows.extend(best["route_rows"])
+        print(f"  BEST FOR {cap}: {best['method']} | {best['weekly_miles']} miles | {best['total_routes']} routes")
+
+    return pd.DataFrame(best_results), pd.DataFrame(all_method_rows), pd.DataFrame(all_route_rows)
+
+def main():
+    print("Loaded day labels:", sorted(ORDERS["DayOfWeek"].dropna().unique().tolist()))
+    print("Depot in distance index?", DEPOT_ZIP in DIST_MATRIX.index)
+    print("Distance matrix shape:", DIST_MATRIX.shape)
+
+    summary_df, methods_df, routes_df = run_best_of_methods_sensitivity()
+
+    summary_df.to_csv("SA1_BestOfMethods_NoOvernight_Summary.csv", index=False)
+    methods_df.to_csv("SA1_BestOfMethods_NoOvernight_AllMethodResults.csv", index=False)
+    routes_df.to_csv("SA1_BestOfMethods_NoOvernight_BestRouteDetails.csv", index=False)
+
+    print("\nBest-of-Methods Summary — No Overnight")
+    print("-" * 95)
+    print(summary_df.to_string(index=False))
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(summary_df["Capacity"], summary_df["WeeklyMiles"], marker="o")
+    plt.xlabel("Van Capacity")
+    plt.ylabel("Best Weekly Miles")
+    plt.title("No Overnight — Weekly Miles vs Van Capacity")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig("SA1_BestOfMethods_NoOvernight_WeeklyMiles.png", dpi=180)
+    plt.close()
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(summary_df["Capacity"], summary_df["TotalRoutes"], marker="o")
+    plt.xlabel("Van Capacity")
+    plt.ylabel("Best Total Routes")
+    plt.title("No Overnight — Total Routes vs Van Capacity")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig("SA1_BestOfMethods_NoOvernight_TotalRoutes.png", dpi=180)
+    plt.close()
+
+    print("\nFiles saved:")
+    print("  SA1_BestOfMethods_NoOvernight_Summary.csv")
+    print("  SA1_BestOfMethods_NoOvernight_AllMethodResults.csv")
+    print("  SA1_BestOfMethods_NoOvernight_BestRouteDetails.csv")
+    print("  SA1_BestOfMethods_NoOvernight_WeeklyMiles.png")
+    print("  SA1_BestOfMethods_NoOvernight_TotalRoutes.png")
+
+ORDERS, DIST_MATRIX = load_inputs()
+
+if __name__ == "__main__":
+    main()
