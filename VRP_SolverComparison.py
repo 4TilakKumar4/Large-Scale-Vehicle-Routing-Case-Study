@@ -26,6 +26,7 @@ from vrp_solvers.clarkeWright       import ClarkeWrightSolver
 from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
+from vrp_solvers.resourceAnalyser   import ResourceAnalyser
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "comparison")
@@ -94,27 +95,30 @@ def buildSolvers():
 
 
 def runAll(orders, verbose=True):
-    """Run every solver on every day; return results dict and convergence data."""
+    """Run every solver on every day; return results dict, convergence data, and resource reports."""
     solvers    = buildSolvers()
     results    = {key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0,
                         "runtime_s": 0.0} for key in solvers}
     convergence     = {}
     alnsWeightHist  = {}
+    resourceReports = {}
 
-    for day in DAYS:
+    for algoKey, solver in solvers.items():
         if verbose:
-            print(f"\n  {day}")
+            print(f"\n  {ALGO_LABELS[algoKey]}")
 
-        dayOrders = orders[orders["DayOfWeek"] == day].copy()
+        routesByDay = {}
 
-        for algoKey, solver in solvers.items():
-            routes = solver.solve(dayOrders)
-            stats  = solver.getStats()
+        for day in DAYS:
+            dayOrders = orders[orders["DayOfWeek"] == day].copy()
+            routes    = solver.solve(dayOrders)
+            stats     = solver.getStats()
 
-            results[algoKey]["days"][day]    = {**stats, "day": day}
-            results[algoKey]["weekly_miles"] += stats["miles"]
+            routesByDay[day]                  = routes
+            results[algoKey]["days"][day]     = {**stats, "day": day}
+            results[algoKey]["weekly_miles"]  += stats["miles"]
             results[algoKey]["weekly_routes"] += stats["routes"]
-            results[algoKey]["runtime_s"]    += stats["runtime_s"]
+            results[algoKey]["runtime_s"]     += stats["runtime_s"]
 
             if solver.getConvergence() is not None:
                 convergence.setdefault(algoKey, {})[day] = solver.getConvergence()
@@ -123,22 +127,35 @@ def runAll(orders, verbose=True):
                 alnsWeightHist[day] = solver.getWeightHistory()
 
             if verbose:
-                print(f"    {ALGO_LABELS[algoKey]:22s} | "
-                      f"miles={stats['miles']:6,} | routes={stats['routes']:2d} | "
+                print(f"    {day}: miles={stats['miles']:6,} | routes={stats['routes']:2d} | "
                       f"feasible={stats['feasible']} | {stats['runtime_s']:.1f}s")
 
-    return results, convergence, alnsWeightHist
+        # Resource analysis across the full weekly solution for this solver
+        analyser = ResourceAnalyser(routesByDay)
+        analyser.analyse()
+        report = analyser.getReport()
+        resourceReports[algoKey]            = report
+        results[algoKey]["min_drivers"]     = report["min_drivers"]
+        results[algoKey]["min_trucks_peak"] = report["min_trucks_peak"]
+
+        if verbose:
+            print(f"    Resources: {report['min_drivers']} drivers | "
+                  f"{report['min_trucks_peak']} peak trucks")
+
+    return results, convergence, alnsWeightHist, resourceReports
 
 
 def exportCsvs(results):
     """Write comparison_summary.csv and per_day_detail.csv to outputs/comparison/."""
     summaryRows = [
         {
-            "algorithm":     key,
-            "label":         ALGO_LABELS[key],
-            "weekly_miles":  data["weekly_miles"],
-            "weekly_routes": data["weekly_routes"],
-            "runtime_s":     round(data["runtime_s"], 2),
+            "algorithm":      key,
+            "label":          ALGO_LABELS[key],
+            "weekly_miles":   data["weekly_miles"],
+            "weekly_routes":  data["weekly_routes"],
+            "min_drivers":    data.get("min_drivers", ""),
+            "min_trucks_peak": data.get("min_trucks_peak", ""),
+            "runtime_s":      round(data["runtime_s"], 2),
         }
         for key, data in results.items()
     ]
@@ -301,7 +318,7 @@ def main():
     orders, _ = loadInputs()
 
     print("\nRunning all algorithms...")
-    results, convergenceData, alnsWeightHist = runAll(orders, verbose=True)
+    results, convergenceData, alnsWeightHist, resourceReports = runAll(orders, verbose=True)
 
     print("\nExporting CSVs...")
     summaryDF, detailDF = exportCsvs(results)
@@ -323,7 +340,9 @@ def main():
     print("-" * 60)
     for _, row in summaryDF.iterrows():
         print(f"  {row['label']:22s} | miles={row['weekly_miles']:6,} | "
-              f"routes={row['weekly_routes']:3d} | {row['runtime_s']:.1f}s")
+              f"routes={row['weekly_routes']:3d} | "
+              f"drivers={row['min_drivers']:3} | trucks={row['min_trucks_peak']:3} | "
+              f"{row['runtime_s']:.1f}s")
 
     print(f"\nAll outputs written to outputs/comparison/")
 

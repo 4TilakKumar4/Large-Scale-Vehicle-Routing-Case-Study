@@ -1,8 +1,8 @@
-algorithm,label,weekly_miles,weekly_routes,runtime_s
-alns,ALNS,7844,31,397.62
-tabu_search,Tabu Search,7893,32,137.95
-cw_2opt_oropt,CW + 2-opt/Or-opt,7904,32,2.08
-simulated_annealing,Simulated Annealing,7904,32,6.78
-cw_only,CW Only,7940,32,1.07
-nn_2opt_oropt,NN + 2-opt/Or-opt,9539,32,2.4
-nn_only,NN Only,9758,32,1.54
+algorithm,label,weekly_miles,weekly_routes,min_drivers,min_trucks_peak,runtime_s
+alns,ALNS,7844,31,7,7,395.74
+tabu_search,Tabu Search,7893,32,7,7,143.36
+cw_2opt_oropt,CW + 2-opt/Or-opt,7904,32,7,7,2.04
+simulated_annealing,Simulated Annealing,7904,32,7,7,6.9
+cw_only,CW Only,7940,32,7,7,1.05
+nn_2opt_oropt,NN + 2-opt/Or-opt,9539,32,10,7,2.31
+nn_only,NN Only,9758,32,10,7,1.51

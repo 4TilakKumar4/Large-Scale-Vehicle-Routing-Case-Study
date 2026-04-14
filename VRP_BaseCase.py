@@ -13,6 +13,7 @@ from vrp_solvers.base import (
     routeIds,
 )
 from vrp_solvers.clarkeWright import ClarkeWrightSolver
+from vrp_solvers.resourceAnalyser import ResourceAnalyser
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "base_case")
@@ -44,7 +45,7 @@ def printDayReport(day, routes):
 
 
 def main():
-    """Build CW + local search routes for each day and report results."""
+    """Build CW + local search routes for each day, report results, and analyse resources."""
     orders, _ = loadInputs()
     solver    = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
 
@@ -69,6 +70,10 @@ def main():
     print("Total routes:",           weeklyTotalRoutes)
     print("Total orders fulfilled:", weeklyTotalOrders)
     print("Total miles:",            weeklyTotalMiles)
+
+    analyser = ResourceAnalyser(routesByDay)
+    analyser.analyse()
+    analyser.printReport()
 
 
 if __name__ == "__main__":

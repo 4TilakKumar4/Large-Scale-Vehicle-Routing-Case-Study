@@ -20,6 +20,13 @@ from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.alns               import ALNSSolver
+from vrp_solvers.resourceAnalyser   import ResourceAnalyser
+from vrp_solvers.overnightSolver    import (
+    OvernightSolver,
+    evaluateOvernightRoute,
+    applyOvernightImprovements,
+    findAllOvernightCandidates,
+)
 
 __all__ = [
     "loadInputs",
@@ -30,4 +37,9 @@ __all__ = [
     "TabuSearchSolver",
     "SimulatedAnnealingSolver",
     "ALNSSolver",
+    "ResourceAnalyser",
+    "OvernightSolver",
+    "evaluateOvernightRoute",
+    "applyOvernightImprovements",
+    "findAllOvernightCandidates",
 ]
