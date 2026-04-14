@@ -20,13 +20,17 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from vrp_solvers.base import DAYS, loadInputs
+from vrp_solvers.base import DAYS, loadInputs, evaluateRoute
 from vrp_solvers.alns               import ALNSSolver
 from vrp_solvers.clarkeWright       import ClarkeWrightSolver
 from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
+from vrp_solvers.overnightSolver    import (
+    OvernightSolver,
+    applyOvernightImprovements,
+)
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "comparison")
@@ -39,6 +43,8 @@ ALGO_LABELS = {
     "tabu_search":         "Tabu Search",
     "simulated_annealing": "Simulated Annealing",
     "alns":                "ALNS",
+    "cw_overnight":        "CW + Overnight",
+    "alns_overnight":      "ALNS + Overnight",
 }
 
 ALGO_COLORS = {
@@ -49,6 +55,8 @@ ALGO_COLORS = {
     "tabu_search":         "#457B9D",
     "simulated_annealing": "#E63946",
     "alns":                "#9B5DE5",
+    "cw_overnight":        "#F72585",
+    "alns_overnight":      "#4CC9F0",
 }
 
 PLOT_STYLE = {
@@ -94,14 +102,25 @@ def buildSolvers():
     }
 
 
+def buildOvernightSolvers():
+    """Return overnight solver instances; these take full orders not single-day slices."""
+    return {
+        "cw_overnight":   OvernightSolver(ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)),
+        "alns_overnight": OvernightSolver(ALNSSolver()),
+    }
+
+
 def runAll(orders, verbose=True):
     """Run every solver on every day; return results dict, convergence data, and resource reports."""
     solvers    = buildSolvers()
-    results    = {key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0,
-                        "runtime_s": 0.0} for key in solvers}
+    allKeys  = list(solvers.keys()) + ["cw_overnight", "alns_overnight"]
+    results  = {key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0,
+                      "runtime_s": 0.0} for key in allKeys}
     convergence     = {}
     alnsWeightHist  = {}
     resourceReports = {}
+
+    solverRoutesByDay = {}   # stores full weekly routesByDay per solver for overnight reuse
 
     for algoKey, solver in solvers.items():
         if verbose:
@@ -137,10 +156,60 @@ def runAll(orders, verbose=True):
         resourceReports[algoKey]            = report
         results[algoKey]["min_drivers"]     = report["min_drivers"]
         results[algoKey]["min_trucks_peak"] = report["min_trucks_peak"]
+        solverRoutesByDay[algoKey]          = routesByDay
 
         if verbose:
             print(f"    Resources: {report['min_drivers']} drivers | "
                   f"{report['min_trucks_peak']} peak trucks")
+
+    # Apply overnight pairings on top of stored routes — no need to re-run base solvers
+    for overnightKey, baseKey in [("cw_overnight", "cw_2opt_oropt"),
+                                   ("alns_overnight", "alns")]:
+        if verbose:
+            print(f"\n  {ALGO_LABELS[overnightKey]}")
+
+        baseRoutesByDay = solverRoutesByDay.get(baseKey, {})
+        if not baseRoutesByDay:
+            continue
+
+        overnightRoutes, usedRoutes = applyOvernightImprovements(baseRoutesByDay)
+
+        # Compute combined miles and route count
+        finalMiles  = 0
+        finalRoutes = 0
+        allFeasible = True
+        for day in DAYS:
+            for idx, route in enumerate(baseRoutesByDay.get(day, [])):
+                if idx not in usedRoutes[day]:
+                    r = evaluateRoute(route)
+                    finalMiles  += r["total_miles"]
+                    finalRoutes += 1
+                    if not r["overall_feasible"]:
+                        allFeasible = False
+        for ovn in overnightRoutes:
+            finalMiles  += ovn["results"]["total_miles"]
+            finalRoutes += 1
+            if not ovn["results"]["overall_feasible"]:
+                allFeasible = False
+
+        analyser = ResourceAnalyser(baseRoutesByDay, overnightPairings=overnightRoutes)
+        analyser.analyse()
+        report = analyser.getReport()
+
+        results[overnightKey] = {
+            "days":            {},
+            "weekly_miles":    finalMiles,
+            "weekly_routes":   finalRoutes,
+            "runtime_s":       0.0,
+            "min_drivers":     report["min_drivers"],
+            "min_trucks_peak": report["min_trucks_peak"],
+        }
+        resourceReports[overnightKey] = report
+
+        if verbose:
+            print(f"    miles={finalMiles:6,} | routes={finalRoutes:2d} | "
+                  f"overnight_pairs={len(overnightRoutes)} | feasible={allFeasible} | "
+                  f"drivers={report['min_drivers']} | trucks={report['min_trucks_peak']}")
 
     return results, convergence, alnsWeightHist, resourceReports
 
