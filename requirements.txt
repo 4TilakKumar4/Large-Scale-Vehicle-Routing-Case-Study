@@ -7,3 +7,4 @@ scipy
 folium
 pgeocode
 scikit-learn
+pytest
