@@ -33,11 +33,10 @@ from vrp_solvers.base import (
 )
 
 def _getMiles(route, vehicleType):
-    """Return total route miles or inf if the route is infeasible."""
+    """Return total route miles. Feasibility is tracked separately."""
     if not route:
         return 0.0
-    res = evaluateMixedRoute(route, vehicleType)
-    return res["total_miles"] if res["overall_feasible"] else float("inf")
+    return evaluateMixedRoute(route, vehicleType)["total_miles"]
 
 def _isStRequired(stop):
     return str(stop.get("straight_truck_required", "no")).strip().lower() == "yes"

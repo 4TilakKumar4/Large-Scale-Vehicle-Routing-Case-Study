@@ -80,9 +80,7 @@ DAY_COLORS_PLOT = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Geocoding helpers (shared with base case map)
-# ---------------------------------------------------------------------------
 
 def geocodeAllZips(allZips):
     """Geocode ZIP codes via pgeocode; fill missing with MDS layout."""
@@ -142,9 +140,7 @@ def _mdsLayout(allZips):
     return coords
 
 
-# ---------------------------------------------------------------------------
 # Map builder
-# ---------------------------------------------------------------------------
 
 def buildMap(vanByDay, stByDay, zipCoords):
     """
@@ -357,9 +353,7 @@ def buildMap(vanByDay, stByDay, zipCoords):
     return m
 
 
-# ---------------------------------------------------------------------------
 # Exports (same as VRP_MixedFleet.py)
-# ---------------------------------------------------------------------------
 
 def exportRouteDetails(vanByDay, stByDay):
     locsPath = os.path.join(DATA_DIR, "locations_clean.csv")
@@ -476,9 +470,7 @@ def plotFleetAnalysis(vanByDay, stByDay):
     print(f"  Saved: {outPath}")
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def main():
     """Run mixed fleet solver, render Folium map, export all outputs."""

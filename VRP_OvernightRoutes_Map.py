@@ -70,9 +70,7 @@ OVERNIGHT_CONNECTOR_COLOR = "#222222"   # dark connector for overnight transit l
 OVERNIGHT_CONNECTOR_WEIGHT = 4
 
 
-# ---------------------------------------------------------------------------
 # Geocoding helpers (shared with BaseCase_Map)
-# ---------------------------------------------------------------------------
 
 def geocodeAllZips(allZips):
     """Geocode ZIP codes to (lat, lon) via pgeocode; fall back to MDS if needed."""
@@ -134,9 +132,7 @@ def mdsLayout(allZips):
     return coords
 
 
-# ---------------------------------------------------------------------------
 # Map helpers
-# ---------------------------------------------------------------------------
 
 def addStopMarkers(route, routeLabel, routeColor, routeResult, zipCoords, group):
     """Add circle markers and sequence number labels for every stop on a route."""
@@ -353,9 +349,9 @@ def buildMap(routesByDay, overnightRoutes, usedRoutes, zipCoords):
     return m
 
 
-# ---------------------------------------------------------------------------
+ 
 # CSV export helpers
-# ---------------------------------------------------------------------------
+ 
 
 def exportRouteDetails(routesByDay, overnightRoutes, usedRoutes):
     """Write per-stop timing CSV for all routes. Output: outputs/overnight/route_details.csv"""
@@ -415,9 +411,7 @@ def exportResourceReport(analyser):
     print(f"  Saved: {chainsPath}")
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def main():
     """Build overnight routes, render map, and export all outputs."""
