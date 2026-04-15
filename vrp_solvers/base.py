@@ -7,6 +7,7 @@ Exports: constants, loadInputs, evaluateRoute, twoOptRoute, orOptRoute,
          applyLocalSearch, consolidateRoutes, and small helpers.
 """
 
+import math
 import os
 
 import pandas as pd
@@ -29,9 +30,46 @@ DEPOT_ZIP     = 1887
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
-# Module-level globals populated by loadInputs()
+# Module-level globals populated by loadInputs() / loadZipCoords()
 ORDERS      = None
 DIST_MATRIX = None
+ZIP_COORDS  = {}   # populated by loadZipCoords()
+
+
+
+def loadZipCoords():
+    """Read ZIP centroids from data/locations_clean.csv; populate ZIP_COORDS global."""
+    global ZIP_COORDS
+    locsPath = os.path.join(DATA_DIR, "locations_clean.csv")
+    try:
+        locs = pd.read_csv(locsPath)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"locations_clean.csv not found at {locsPath}\n"
+            "Run VRP_DataAnalysis.py first to generate the data/ directory."
+        )
+    locs["ZIP"] = pd.to_numeric(locs["ZIP"], errors="coerce")
+    locs["lon"]  = pd.to_numeric(locs["X"] if "X" in locs.columns else locs["lon"], errors="coerce")
+    locs["lat"]  = pd.to_numeric(locs["Y"] if "Y" in locs.columns else locs["lat"], errors="coerce")
+    locs = locs.dropna(subset=["ZIP", "lon", "lat"])
+    ZIP_COORDS = {int(row["ZIP"]): (float(row["lat"]), float(row["lon"]))
+                  for _, row in locs.iterrows()}
+    return ZIP_COORDS
+
+
+def getAngleFromDepot(zipCode):
+    """Polar angle of a ZIP relative to the depot, in [0, 2π). Requires ZIP_COORDS loaded."""
+    if not ZIP_COORDS:
+        raise RuntimeError("ZIP_COORDS is empty — call loadZipCoords() first.")
+    zipCode = int(zipCode)
+    if DEPOT_ZIP not in ZIP_COORDS:
+        raise KeyError(f"Depot ZIP {DEPOT_ZIP} not found in ZIP_COORDS.")
+    if zipCode not in ZIP_COORDS:
+        raise KeyError(f"ZIP {zipCode} not found in ZIP_COORDS.")
+    depotLat, depotLon = ZIP_COORDS[DEPOT_ZIP]
+    lat, lon = ZIP_COORDS[zipCode]
+    angle = math.atan2(lat - depotLat, lon - depotLon)
+    return angle if angle >= 0 else angle + 2 * math.pi
 
 
 def loadInputs():
@@ -511,3 +549,11 @@ def evaluateMixedRoute(routeList, vehicleType, verbose=False):
         "dot_feasible":      bool(dotFeasible),
         "overall_feasible":  bool(overallFeasible),
     }
+
+
+def solveOneDay(dayOrders):
+    """Run CW + consolidation + 2-opt + or-opt for one day. Returns route list."""
+    from vrp_solvers.clarkeWright import ClarkeWrightSolver
+    if dayOrders is None or len(dayOrders) == 0:
+        return []
+    return ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True).solve(dayOrders)

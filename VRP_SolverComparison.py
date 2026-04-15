@@ -30,7 +30,8 @@ from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
-from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
+from vrp_solvers.mixedFleetSolver     import MixedFleetSolver, ALNSMixedFleetSolver
+from vrp_solvers.relaxedScheduleSolver import SweepRelaxedSolver, ALNSRelaxedSolver
 from vrp_solvers.overnightSolver    import (
     OvernightSolver,
     applyOvernightImprovements,
@@ -52,6 +53,8 @@ ALGO_LABELS = {
     "alns_overnight":      "ALNS + Overnight",
     "mixed_fleet":         "Mixed Fleet (Van+ST)",
     "alns_mixed_fleet":    "ALNS Mixed Fleet",
+    "relaxed_sweep":       "Relaxed (Sweep+LS)",
+    "relaxed_alns":        "Relaxed (ALNS+LS)",
 }
 
 ALGO_COLORS = {
@@ -66,6 +69,8 @@ ALGO_COLORS = {
     "alns_overnight":      "#4CC9F0",
     "mixed_fleet":         "#FFD700",
     "alns_mixed_fleet":    "#FF6B35",
+    "relaxed_sweep":       "#06D6A0",
+    "relaxed_alns":        "#118AB2",
 }
 
 # Day-cab configs that have per-day breakdowns — used in grouped day plots
@@ -133,7 +138,10 @@ def runAll(orders, verbose=True):
     """
     cm      = CostModel()
     solvers = buildSolvers()
-    allKeys = list(solvers.keys()) + ["cw_overnight", "alns_overnight", "mixed_fleet", "alns_mixed_fleet"]
+    allKeys = list(solvers.keys()) + ["cw_overnight", "alns_overnight",
+             "mixed_fleet", "alns_mixed_fleet",
+             "relaxed_sweep", "relaxed_alns"]
+
 
     results = {
         key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0, "runtime_s": 0.0}
@@ -300,6 +308,49 @@ def runAll(orders, verbose=True):
         if verbose:
             print(f"    Resources: {report['min_drivers']} drivers | "
                   f"{report['min_trucks_peak']} peak trucks | "
+                  f"annual cost ${bd['annual']['total']:,.0f}")
+
+    # Relaxed schedule solvers — operate on full orders, not per-day slices
+
+    relaxedSolvers = {
+        "relaxed_sweep":  SweepRelaxedSolver(verbose=verbose),
+        "relaxed_alns":   ALNSRelaxedSolver(verbose=verbose),
+    }
+
+    for rKey, rSolver in relaxedSolvers.items():
+        if verbose:
+            print(f"\n  {ALGO_LABELS.get(rKey, rKey)}")
+
+        rSolver.solve(orders)
+        rStats      = rSolver.getStats()
+        rRoutesByDay = {day: [] for day in DAYS}
+        for day in DAYS:
+            dayOrders          = rSolver.getOrders()[rSolver.getOrders()["DayOfWeek"] == day].copy()
+            from vrp_solvers.base import solveOneDay as _sod
+            rRoutesByDay[day]  = _sod(dayOrders)
+
+        analyser = ResourceAnalyser(rRoutesByDay)
+        analyser.analyse()
+        report   = analyser.getReport()
+
+        bd = cm.weeklyBreakdown(rRoutesByDay)
+
+        results[rKey] = {
+            "days":            {},
+            "weekly_miles":    rStats["weekly_miles"],
+            "weekly_routes":   rStats["routes"],
+            "runtime_s":       rStats["runtime_s"],
+            "min_drivers":     report["min_drivers"],
+            "min_trucks_peak": report["min_trucks_peak"],
+            "weekly_cost":     bd["weekly"]["total"],
+            "annual_cost":     bd["annual"]["total"],
+        }
+        resourceReports[rKey] = report
+
+        if verbose:
+            print(f"    miles={rStats['weekly_miles']:6,} | routes={rStats['routes']:2d} | "
+                  f"moves={rStats['moves_accepted']} | "
+                  f"drivers={report['min_drivers']} | "
                   f"annual cost ${bd['annual']['total']:,.0f}")
 
     return results, convergence, alnsWeightHist, resourceReports

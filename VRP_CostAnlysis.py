@@ -38,7 +38,9 @@ from vrp_solvers.clarkeWright       import ClarkeWrightSolver
 from vrp_solvers.alns               import ALNSSolver
 from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
 from vrp_solvers.overnightSolver    import OvernightSolver, applyOvernightImprovements
+from vrp_solvers.base               import loadZipCoords
 from vrp_solvers.costModel          import CostModel, SENSITIVITY_RANGES
+from vrp_solvers.relaxedScheduleSolver import SweepRelaxedSolver, ALNSRelaxedSolver
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "cost_analysis")
@@ -119,6 +121,28 @@ def buildALNSMixedFleet(orders):
     return None, None, vanByDay, stByDay
 
 
+def buildRelaxedSweep(orders):
+    """Angular sweep seed + greedy local search."""
+    solver = SweepRelaxedSolver()
+    solver.solve(orders)
+    finalOrders = solver.getOrders()
+    from vrp_solvers.base import solveOneDay as _sod
+    routesByDay = {day: _sod(finalOrders[finalOrders["DayOfWeek"] == day].copy())
+                   for day in DAYS}
+    return routesByDay, None, None, None
+
+
+def buildRelaxedALNS(orders):
+    """ALNS inter-day + greedy local search."""
+    solver = ALNSRelaxedSolver()
+    solver.solve(orders)
+    finalOrders = solver.getOrders()
+    from vrp_solvers.base import solveOneDay as _sod
+    routesByDay = {day: _sod(finalOrders[finalOrders["DayOfWeek"] == day].copy())
+                   for day in DAYS}
+    return routesByDay, None, None, None
+
+
 def buildALNS(orders):
     """ALNS metaheuristic, no overnight."""
     solver      = ALNSSolver()
@@ -141,6 +165,8 @@ SCENARIOS = {
     "ALNS":                 buildALNS,
     "ALNS + Overnight":     buildALNSOvernight,
     "ALNS Mixed Fleet":     buildALNSMixedFleet,
+    "Relaxed (Sweep+LS)":   buildRelaxedSweep,
+    "Relaxed (ALNS+LS)":    buildRelaxedALNS,
 }
 
 # Helpers
@@ -265,6 +291,7 @@ def plotSensitivity(sensitivityDF, param, lowVal, defaultVal, highVal):
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     orders, _ = loadInputs()
+    loadZipCoords()
 
     # 1. Build all scenarios and compute costs
 
