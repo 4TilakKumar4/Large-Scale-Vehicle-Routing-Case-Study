@@ -30,6 +30,7 @@ from vrp_solvers.overnightSolver import (
     ADJACENT_DAY_PAIRS,
 )
 from vrp_solvers.resourceAnalyser import ResourceAnalyser
+from vrp_solvers.costModel        import CostModel
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "overnight")
@@ -210,6 +211,10 @@ def main():
     analyser = ResourceAnalyser(routesByDay, overnightPairings=overnightRoutes)
     analyser.analyse()
     analyser.printReport()
+
+    costModel = CostModel()
+    breakdown = costModel.weeklyBreakdown(routesByDay, overnightPairings=overnightRoutes)
+    costModel.printSummary(breakdown, label="Overnight Routes (CW + LS)")
 
     print("\nExporting outputs...")
     exportRouteDetails(routesByDay, overnightRoutes, usedRoutes)

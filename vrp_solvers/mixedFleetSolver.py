@@ -32,7 +32,6 @@ from vrp_solvers.base import (
     getDistance,
 )
 
-
 def _getMiles(route, vehicleType):
     """Return total route miles or inf if the route is infeasible."""
     if not route:
@@ -40,18 +39,14 @@ def _getMiles(route, vehicleType):
     res = evaluateMixedRoute(route, vehicleType)
     return res["total_miles"] if res["overall_feasible"] else float("inf")
 
-
 def _isStRequired(stop):
     return str(stop.get("straight_truck_required", "no")).strip().lower() == "yes"
-
 
 def _isTooLargeForST(stop):
     return float(stop["CUBE"]) > ST_CAPACITY
 
-
 def _isFlexible(stop):
     return not _isStRequired(stop) and not _isTooLargeForST(stop)
-
 
 class MixedFleetSolver:
     """
@@ -107,9 +102,7 @@ class MixedFleetSolver:
     def getStRoutes(self):
         return self._stRoutes or []
 
-    # ------------------------------------------------------------------
     # Construction
-    # ------------------------------------------------------------------
 
     def _unifiedCW(self, stops):
         """
@@ -199,9 +192,7 @@ class MixedFleetSolver:
 
         return vanRoutes, stRoutes
 
-    # ------------------------------------------------------------------
     # Improvement operators
-    # ------------------------------------------------------------------
 
     def _twoOpt(self, route, vehicleType):
         """Intra-route 2-opt improvement."""
@@ -377,9 +368,7 @@ class MixedFleetSolver:
 
         return [r for r in vanRoutes if r], [r for r in stRoutes if r]
 
-    # ------------------------------------------------------------------
     # Stats
-    # ------------------------------------------------------------------
 
     def _collectStats(self, vanRoutes, stRoutes, elapsed):
         vanMiles    = sum(_getMiles(r, "van") for r in vanRoutes)

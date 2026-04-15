@@ -1,0 +1,6 @@
+scenario,weekly_miles,annual_miles,weekly_total,annual_total
+Base Case (CW+LS),7904,411008,29320.28,1524654.56
+Overnight (CW+LS),7780,404560,31167.22,1620695.44
+Mixed Fleet (Van+ST),8376,435552,32383.45,1683939.4
+ALNS,7844,407888,29110.14,1513727.28
+ALNS + Overnight,7610,395720,29991.16,1559540.32

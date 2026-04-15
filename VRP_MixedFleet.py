@@ -37,6 +37,7 @@ from vrp_solvers.base import (
 )
 from vrp_solvers.mixedFleetSolver import MixedFleetSolver, _getMiles
 from vrp_solvers.resourceAnalyser import ResourceAnalyser
+from vrp_solvers.costModel        import CostModel
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "mixed_fleet")
@@ -50,9 +51,7 @@ DAY_COLORS = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Console report
-# ---------------------------------------------------------------------------
 
 def printDayReport(day, vanRoutes, stRoutes):
     """Print per-route details for one day; return (total_miles, total_routes)."""
@@ -176,9 +175,8 @@ def _printRow(tag, veh, stops, res, cube, cap, issues):
           f"{cube:>6} {cap:>5}  {status}")
 
 
-# ---------------------------------------------------------------------------
+
 # Exports
-# ---------------------------------------------------------------------------
 
 def exportRouteDetails(vanByDay, stByDay):
     """Write per-stop timing CSV with vehicle_type column."""
@@ -222,9 +220,7 @@ def exportResourceReport(analyser):
     print(f"  Saved: {chainsPath}")
 
 
-# ---------------------------------------------------------------------------
 # Plots
-# ---------------------------------------------------------------------------
 
 def plotFleetAnalysis(vanByDay, stByDay):
     """Stacked daily miles and average capacity utilisation per fleet."""
@@ -398,9 +394,8 @@ def plotRouteMap(vanByDay, stByDay):
     print(f"  Saved: {outPath}")
 
 
-# ---------------------------------------------------------------------------
+
 # Main
-# ---------------------------------------------------------------------------
 
 def main():
     """Run mixed fleet solver for each day, verify, and export all outputs."""
@@ -448,6 +443,12 @@ def main():
     analyser      = ResourceAnalyser(combinedByDay)
     analyser.analyse()
     analyser.printReport()
+
+    costModel = CostModel()
+    breakdown = costModel.weeklyBreakdown(
+        routesByDay=None, vanByDay=vanByDay, stByDay=stByDay
+    )
+    costModel.printSummary(breakdown, label="Mixed Fleet (Van + ST)")
 
     print("\nExporting outputs...")
     exportRouteDetails(vanByDay, stByDay)

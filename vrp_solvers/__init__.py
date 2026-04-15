@@ -21,6 +21,7 @@ from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.alns               import ALNSSolver
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
+from vrp_solvers.costModel          import CostModel, SENSITIVITY_RANGES
 from vrp_solvers.mixedFleetSolver   import MixedFleetSolver
 from vrp_solvers.overnightSolver    import (
     OvernightSolver,
@@ -39,6 +40,8 @@ __all__ = [
     "SimulatedAnnealingSolver",
     "ALNSSolver",
     "ResourceAnalyser",
+    "CostModel",
+    "SENSITIVITY_RANGES",
     "MixedFleetSolver",
     "OvernightSolver",
     "evaluateOvernightRoute",

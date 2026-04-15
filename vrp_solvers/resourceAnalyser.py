@@ -28,7 +28,6 @@ ADJACENT_DAYS = [
     ("Thu", "Fri"),
 ]
 
-
 class ResourceAnalyser:
     """
     Computes minimum trucks and drivers for a given weekly routing solution.
@@ -142,9 +141,7 @@ class ResourceAnalyser:
             chainStr = " → ".join(f"{day}[R{ridx + 1}]" for day, ridx in chain)
             print(f"    Driver {i:2d}: {chainStr}")
 
-    # ------------------------------------------------------------------
     # Private helpers
-    # ------------------------------------------------------------------
 
     def _computeTrucks(self):
         """One truck per route per day — trucks cannot be reused intra-day."""

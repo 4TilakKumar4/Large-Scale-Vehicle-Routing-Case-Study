@@ -1,5 +1,5 @@
 """
-VRP_SolverComparison.py — Compare seven algorithm configurations on the NHG dataset.
+VRP_SolverComparison.py — Compare ten algorithm configurations on the NHG dataset.
 
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
 
@@ -8,9 +8,12 @@ Comparison matrix:
     nn_only              Nearest-neighbor construction only
     cw_2opt_oropt        CW + 2-opt + or-opt
     nn_2opt_oropt        NN + 2-opt + or-opt
-    tabu_search          CW + 2opt/oropt seed → Tabu Search
-    simulated_annealing  CW + 2opt/oropt seed → Simulated Annealing
-    alns                 CW + 2opt/oropt seed → ALNS
+    tabu_search          CW + LS seed → Tabu Search
+    simulated_annealing  CW + LS seed → Simulated Annealing
+    alns                 CW + LS seed → ALNS
+    cw_overnight         CW + LS + overnight pairings
+    alns_overnight       ALNS + overnight pairings
+    mixed_fleet          Mixed fleet Van + Straight Truck (CW + LS)
 """
 
 import os
@@ -32,6 +35,7 @@ from vrp_solvers.overnightSolver    import (
     OvernightSolver,
     applyOvernightImprovements,
 )
+from vrp_solvers.costModel          import CostModel
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "comparison")
@@ -46,8 +50,7 @@ ALGO_LABELS = {
     "alns":                "ALNS",
     "cw_overnight":        "CW + Overnight",
     "alns_overnight":      "ALNS + Overnight",
-    "mixed_fleet":         "Mixed Fleet (Van + ST)",
-    "alns_overnight":      "ALNS + Overnight",
+    "mixed_fleet":         "Mixed Fleet (Van+ST)",
 }
 
 ALGO_COLORS = {
@@ -61,8 +64,13 @@ ALGO_COLORS = {
     "cw_overnight":        "#F72585",
     "alns_overnight":      "#4CC9F0",
     "mixed_fleet":         "#FFD700",
-    "alns_overnight":      "#4CC9F0",
 }
+
+# Day-cab configs that have per-day breakdowns — used in grouped day plots
+DAY_CAB_KEYS = [
+    "cw_only", "nn_only", "cw_2opt_oropt", "nn_2opt_oropt",
+    "tabu_search", "simulated_annealing", "alns",
+]
 
 PLOT_STYLE = {
     "figsize":    (13, 6),
@@ -82,10 +90,8 @@ plt.rcParams.update({
     "grid.color":        PLOT_STYLE["spineColor"],
 })
 
-
 def makeDirs():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 
 def saveFig(name):
     path = os.path.join(OUTPUT_DIR, name)
@@ -93,9 +99,7 @@ def saveFig(name):
     plt.close()
     print(f"  Saved: {path}")
 
-
 def buildSolvers():
-    """Return the ordered dict of (algoKey → solver instance) for the comparison."""
     return {
         "cw_only":             ClarkeWrightSolver(useTwoOpt=False, useOrOpt=False),
         "nn_only":             NearestNeighborSolver(useTwoOpt=False, useOrOpt=False),
@@ -106,31 +110,36 @@ def buildSolvers():
         "alns":                ALNSSolver(),
     }
 
-
 def buildOvernightSolvers():
-    """Return overnight solver instances; these take full orders not single-day slices."""
     return {
         "cw_overnight":   OvernightSolver(ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)),
         "alns_overnight": OvernightSolver(ALNSSolver()),
     }
 
-
 def buildMixedFleetSolvers():
-    """Return the mixed fleet solver."""
     return {"mixed_fleet": MixedFleetSolver()}
 
-
 def runAll(orders, verbose=True):
-    """Run every solver on every day; return results dict, convergence data, and resource reports."""
-    solvers    = buildSolvers()
-    allKeys  = list(solvers.keys()) + ["cw_overnight", "alns_overnight", "mixed_fleet"]
-    results  = {key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0,
-                      "runtime_s": 0.0} for key in allKeys}
-    convergence     = {}
-    alnsWeightHist  = {}
-    resourceReports = {}
+    """
+    Run all ten configurations.
+    Returns (results, convergenceData, alnsWeightHist, resourceReports).
+    results[key] contains weekly_miles, weekly_routes, min_drivers,
+    min_trucks_peak, runtime_s, weekly_cost, annual_cost.
+    """
+    cm      = CostModel()
+    solvers = buildSolvers()
+    allKeys = list(solvers.keys()) + ["cw_overnight", "alns_overnight", "mixed_fleet"]
 
-    solverRoutesByDay = {}   # stores full weekly routesByDay per solver for overnight reuse
+    results = {
+        key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0, "runtime_s": 0.0}
+        for key in allKeys
+    }
+    convergence      = {}
+    alnsWeightHist   = {}
+    resourceReports  = {}
+    solverRoutesByDay = {}
+
+    # Day-cab solvers
 
     for algoKey, solver in solvers.items():
         if verbose:
@@ -159,7 +168,6 @@ def runAll(orders, verbose=True):
                 print(f"    {day}: miles={stats['miles']:6,} | routes={stats['routes']:2d} | "
                       f"feasible={stats['feasible']} | {stats['runtime_s']:.1f}s")
 
-        # Resource analysis across the full weekly solution for this solver
         analyser = ResourceAnalyser(routesByDay)
         analyser.analyse()
         report = analyser.getReport()
@@ -168,11 +176,18 @@ def runAll(orders, verbose=True):
         results[algoKey]["min_trucks_peak"] = report["min_trucks_peak"]
         solverRoutesByDay[algoKey]          = routesByDay
 
+        # Cost
+        bd = cm.weeklyBreakdown(routesByDay)
+        results[algoKey]["weekly_cost"] = bd["weekly"]["total"]
+        results[algoKey]["annual_cost"] = bd["annual"]["total"]
+
         if verbose:
             print(f"    Resources: {report['min_drivers']} drivers | "
-                  f"{report['min_trucks_peak']} peak trucks")
+                  f"{report['min_trucks_peak']} peak trucks | "
+                  f"annual cost ${bd['annual']['total']:,.0f}")
 
-    # Apply overnight pairings on top of stored routes — no need to re-run base solvers
+    # Overnight configs — apply pairings on top of stored routes
+
     for overnightKey, baseKey in [("cw_overnight", "cw_2opt_oropt"),
                                    ("alns_overnight", "alns")]:
         if verbose:
@@ -184,7 +199,6 @@ def runAll(orders, verbose=True):
 
         overnightRoutes, usedRoutes = applyOvernightImprovements(baseRoutesByDay)
 
-        # Compute combined miles and route count
         finalMiles  = 0
         finalRoutes = 0
         allFeasible = True
@@ -206,6 +220,8 @@ def runAll(orders, verbose=True):
         analyser.analyse()
         report = analyser.getReport()
 
+        bd = cm.weeklyBreakdown(baseRoutesByDay, overnightPairings=overnightRoutes)
+
         results[overnightKey] = {
             "days":            {},
             "weekly_miles":    finalMiles,
@@ -213,21 +229,27 @@ def runAll(orders, verbose=True):
             "runtime_s":       0.0,
             "min_drivers":     report["min_drivers"],
             "min_trucks_peak": report["min_trucks_peak"],
+            "weekly_cost":     bd["weekly"]["total"],
+            "annual_cost":     bd["annual"]["total"],
         }
         resourceReports[overnightKey] = report
 
         if verbose:
             print(f"    miles={finalMiles:6,} | routes={finalRoutes:2d} | "
                   f"overnight_pairs={len(overnightRoutes)} | feasible={allFeasible} | "
-                  f"drivers={report['min_drivers']} | trucks={report['min_trucks_peak']}")
+                  f"drivers={report['min_drivers']} | trucks={report['min_trucks_peak']} | "
+                  f"annual cost ${bd['annual']['total']:,.0f}")
 
-    # Mixed fleet — runs per day like regular solvers but uses MixedFleetSolver
+    # Mixed fleet
+
     mixedSolvers = buildMixedFleetSolvers()
     for mKey, mSolver in mixedSolvers.items():
         if verbose:
             print(f"\n  {ALGO_LABELS.get(mKey, mKey)}")
 
         mRoutesByDay = {}
+        vanByDay     = {}
+        stByDay      = {}
         totalMiles   = 0
         totalRoutes  = 0
         totalRuntime = 0.0
@@ -238,7 +260,9 @@ def runAll(orders, verbose=True):
             mSolver.solve(dayOrders)
             stats = mSolver.getStats()
 
-            mRoutesByDay[day]  = mSolver.getVanRoutes() + mSolver.getStRoutes()
+            vanByDay[day]      = mSolver.getVanRoutes()
+            stByDay[day]       = mSolver.getStRoutes()
+            mRoutesByDay[day]  = vanByDay[day] + stByDay[day]
             totalMiles        += stats["miles"]
             totalRoutes       += stats["routes"]
             totalRuntime      += stats["runtime_s"]
@@ -247,13 +271,14 @@ def runAll(orders, verbose=True):
 
             if verbose:
                 print(f"    {day}: miles={stats['miles']:6,} | "
-                      f"van={stats['van_routes']} routes | "
-                      f"st={stats['st_routes']} routes | "
+                      f"van={stats['van_routes']} | st={stats['st_routes']} | "
                       f"{stats['runtime_s']:.1f}s")
 
         analyser = ResourceAnalyser(mRoutesByDay)
         analyser.analyse()
         report = analyser.getReport()
+
+        bd = cm.weeklyBreakdown(routesByDay=None, vanByDay=vanByDay, stByDay=stByDay)
 
         results[mKey] = {
             "days":            {},
@@ -262,27 +287,31 @@ def runAll(orders, verbose=True):
             "runtime_s":       round(totalRuntime, 2),
             "min_drivers":     report["min_drivers"],
             "min_trucks_peak": report["min_trucks_peak"],
+            "weekly_cost":     bd["weekly"]["total"],
+            "annual_cost":     bd["annual"]["total"],
         }
         resourceReports[mKey] = report
 
         if verbose:
             print(f"    Resources: {report['min_drivers']} drivers | "
-                  f"{report['min_trucks_peak']} peak trucks")
+                  f"{report['min_trucks_peak']} peak trucks | "
+                  f"annual cost ${bd['annual']['total']:,.0f}")
 
     return results, convergence, alnsWeightHist, resourceReports
-
 
 def exportCsvs(results):
     """Write comparison_summary.csv and per_day_detail.csv to outputs/comparison/."""
     summaryRows = [
         {
-            "algorithm":      key,
-            "label":          ALGO_LABELS[key],
-            "weekly_miles":   data["weekly_miles"],
-            "weekly_routes":  data["weekly_routes"],
-            "min_drivers":    data.get("min_drivers", ""),
+            "algorithm":       key,
+            "label":           ALGO_LABELS[key],
+            "weekly_miles":    data["weekly_miles"],
+            "weekly_routes":   data["weekly_routes"],
+            "min_drivers":     data.get("min_drivers", ""),
             "min_trucks_peak": data.get("min_trucks_peak", ""),
-            "runtime_s":      round(data["runtime_s"], 2),
+            "weekly_cost":     data.get("weekly_cost", ""),
+            "annual_cost":     data.get("annual_cost", ""),
+            "runtime_s":       round(data["runtime_s"], 2),
         }
         for key, data in results.items()
     ]
@@ -300,7 +329,6 @@ def exportCsvs(results):
     print("  Saved: per_day_detail.csv")
 
     return summaryDF, detailDF
-
 
 def plotMilesComparison(summaryDF):
     """Bar chart of total weekly miles per algorithm."""
@@ -320,57 +348,79 @@ def plotMilesComparison(summaryDF):
     plt.tight_layout()
     saveFig("miles_comparison.png")
 
+def plotCostComparison(summaryDF):
+    """Bar chart of annual cost per algorithm."""
+    df = summaryDF[summaryDF["annual_cost"] != ""].copy()
+    df["annual_cost"] = pd.to_numeric(df["annual_cost"])
+    df = df.sort_values("annual_cost")
+
+    fig, ax = plt.subplots(figsize=PLOT_STYLE["figsize"])
+    colors  = [ALGO_COLORS[a] for a in df["algorithm"]]
+    bars    = ax.bar(df["label"], df["annual_cost"],
+                     color=colors, edgecolor="white", alpha=0.9)
+
+    for bar, v in zip(bars, df["annual_cost"]):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2000,
+                f"${v/1e6:.2f}M", ha="center", va="bottom", fontsize=9)
+
+    ax.set_ylabel("Annual Cost (USD)")
+    ax.set_title("Annual Cost by Algorithm", fontsize=PLOT_STYLE["titleSize"])
+    ax.yaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda x, _: f"${x/1e6:.1f}M" if x >= 1e6 else f"${x:,.0f}")
+    )
+    plt.xticks(rotation=15, ha="right")
+    plt.tight_layout()
+    saveFig("cost_comparison.png")
 
 def plotMilesByDay(detailDF):
-    """Grouped bar chart of daily miles per algorithm."""
-    algos = list(ALGO_LABELS.keys())
+    """Grouped bar chart of daily miles — day-cab configs only."""
+    algos = DAY_CAB_KEYS
     x     = np.arange(len(DAYS))
-    width = 0.11
+    width = 0.12
 
     fig, ax = plt.subplots(figsize=(15, 6))
     for i, algo in enumerate(algos):
         algoData = detailDF[detailDF["algorithm"] == algo].set_index("day").reindex(DAYS)
         offset   = (i - len(algos) / 2 + 0.5) * width
-        ax.bar(x + offset, algoData["miles"].values,
+        ax.bar(x + offset, algoData["miles"].fillna(0).values,
                width, label=ALGO_LABELS[algo],
                color=ALGO_COLORS[algo], edgecolor="white", alpha=0.85)
 
     ax.set_xticks(x)
     ax.set_xticklabels(DAYS)
     ax.set_ylabel("Miles")
-    ax.set_title("Daily Miles by Algorithm", fontsize=PLOT_STYLE["titleSize"])
+    ax.set_title("Daily Miles by Algorithm (day-cab configs)", fontsize=PLOT_STYLE["titleSize"])
     ax.legend(loc="upper right", fontsize=9)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     plt.tight_layout()
     saveFig("miles_by_day.png")
 
-
 def plotRoutesComparison(detailDF):
-    """Grouped bar chart of route count per algorithm per day."""
-    algos = list(ALGO_LABELS.keys())
+    """Grouped bar chart of route count — day-cab configs only."""
+    algos = DAY_CAB_KEYS
     x     = np.arange(len(DAYS))
-    width = 0.11
+    width = 0.12
 
     fig, ax = plt.subplots(figsize=(15, 6))
     for i, algo in enumerate(algos):
         algoData = detailDF[detailDF["algorithm"] == algo].set_index("day").reindex(DAYS)
         offset   = (i - len(algos) / 2 + 0.5) * width
-        ax.bar(x + offset, algoData["routes"].values,
+        ax.bar(x + offset, algoData["routes"].fillna(0).values,
                width, label=ALGO_LABELS[algo],
                color=ALGO_COLORS[algo], edgecolor="white", alpha=0.85)
 
     ax.set_xticks(x)
     ax.set_xticklabels(DAYS)
     ax.set_ylabel("Number of Routes")
-    ax.set_title("Route Count by Algorithm per Day", fontsize=PLOT_STYLE["titleSize"])
+    ax.set_title("Route Count by Algorithm per Day (day-cab configs)",
+                 fontsize=PLOT_STYLE["titleSize"])
     ax.legend(loc="upper right", fontsize=9)
     plt.tight_layout()
     saveFig("routes_comparison.png")
 
-
 def plotRuntimeComparison(summaryDF):
     """Horizontal bar chart of total runtime per algorithm."""
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(9, 6))
     colors  = [ALGO_COLORS[a] for a in summaryDF["algorithm"]]
     ax.barh(summaryDF["label"], summaryDF["runtime_s"],
             color=colors, edgecolor="white", alpha=0.9)
@@ -382,7 +432,6 @@ def plotRuntimeComparison(summaryDF):
     ax.set_title("Wall-Clock Runtime by Algorithm", fontsize=PLOT_STYLE["titleSize"])
     plt.tight_layout()
     saveFig("runtime_comparison.png")
-
 
 def plotConvergence(convergenceData, algoKey, title, filename):
     """Line plot of best-cost convergence over iterations, one line per day."""
@@ -400,7 +449,6 @@ def plotConvergence(convergenceData, algoKey, title, filename):
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     plt.tight_layout()
     saveFig(filename)
-
 
 def plotAlnsWeights(alnsWeightHist):
     """Destroy and repair operator weight evolution averaged across days."""
@@ -436,7 +484,6 @@ def plotAlnsWeights(alnsWeightHist):
     plt.tight_layout()
     saveFig("operator_weights_alns.png")
 
-
 def main():
     print("VRP Solver Comparison")
     print("=" * 60)
@@ -452,6 +499,7 @@ def main():
 
     print("\nGenerating plots...")
     plotMilesComparison(summaryDF)
+    plotCostComparison(summaryDF)
     plotMilesByDay(detailDF)
     plotRoutesComparison(detailDF)
     plotRuntimeComparison(summaryDF)
@@ -466,13 +514,13 @@ def main():
     print("\nWeekly Summary")
     print("-" * 60)
     for _, row in summaryDF.iterrows():
-        print(f"  {row['label']:22s} | miles={row['weekly_miles']:6,} | "
+        cost = f"${row['annual_cost']:>12,.0f}" if row["annual_cost"] != "" else "           N/A"
+        print(f"  {row['label']:24s} | miles={row['weekly_miles']:6,} | "
               f"routes={row['weekly_routes']:3d} | "
-              f"drivers={row['min_drivers']:3} | trucks={row['min_trucks_peak']:3} | "
-              f"{row['runtime_s']:.1f}s")
+              f"drivers={str(row['min_drivers']):>3} | trucks={str(row['min_trucks_peak']):>3} | "
+              f"annual={cost} | {row['runtime_s']:.1f}s")
 
     print(f"\nAll outputs written to outputs/comparison/")
-
 
 if __name__ == "__main__":
     main()

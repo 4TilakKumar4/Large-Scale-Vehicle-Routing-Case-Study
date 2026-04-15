@@ -21,6 +21,7 @@ from vrp_solvers.base import (
 )
 from vrp_solvers.clarkeWright import ClarkeWrightSolver
 from vrp_solvers.resourceAnalyser import ResourceAnalyser
+from vrp_solvers.costModel        import CostModel
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "base_case")

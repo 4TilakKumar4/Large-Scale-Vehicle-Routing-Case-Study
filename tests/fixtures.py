@@ -81,6 +81,32 @@ TUE_DF  = makeOrdersDf(TUE_ORDERS)
 ALL_DF  = makeOrdersDf(ALL_ORDERS)
 
 
+# ---------------------------------------------------------------------------
+# Mixed fleet orders — for test_mixedFleetSolver.py
+# ---------------------------------------------------------------------------
+
+# ST-required orders — must go on Straight Truck
+ST_ORDERS = [
+    {**makeOrder(10, 1001, 300, "Mon"), "straight_truck_required": "yes"},
+    {**makeOrder(11, 1002, 400, "Mon"), "straight_truck_required": "yes"},
+]
+
+# Over-capacity for ST (cube > ST_CAPACITY 1400) — must go on Van
+LARGE_ORDERS = [
+    makeOrder(20, 1003, 1500, "Mon"),   # cube 1500 > ST_CAP 1400
+]
+
+# Flexible orders — can go on either fleet
+FLEX_ORDERS = [
+    makeOrder(30, 1004, 300, "Mon"),
+    makeOrder(31, 1005, 350, "Mon"),
+]
+
+# Full mixed day: 2 ST-required + 1 too-large + 2 flexible
+MIXED_MON_ORDERS = ST_ORDERS + LARGE_ORDERS + FLEX_ORDERS
+MIXED_MON_DF     = makeOrdersDf(MIXED_MON_ORDERS)
+
+
 def injectFixture():
     """
     Inject the synthetic distance matrix into vrp_solvers.base so all solver
