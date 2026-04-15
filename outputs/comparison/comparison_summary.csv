@@ -1,10 +1,10 @@
 algorithm,label,weekly_miles,weekly_routes,min_drivers,min_trucks_peak,runtime_s
 alns_overnight,ALNS + Overnight,7610,27,12,7,0.0
 cw_overnight,CW + Overnight,7780,26,11,7,0.0
-alns,ALNS,7844,31,7,7,398.62
-tabu_search,Tabu Search,7893,32,7,7,141.01
-cw_2opt_oropt,CW + 2-opt/Or-opt,7904,32,7,7,2.05
-simulated_annealing,Simulated Annealing,7904,32,7,7,6.83
-cw_only,CW Only,7940,32,7,7,1.07
-nn_2opt_oropt,NN + 2-opt/Or-opt,9539,32,10,7,2.33
-nn_only,NN Only,9758,32,10,7,1.53
+alns,ALNS,7844,31,7,7,413.92
+tabu_search,Tabu Search,7893,32,7,7,145.39
+cw_2opt_oropt,CW + 2-opt/Or-opt,7904,32,7,7,2.06
+simulated_annealing,Simulated Annealing,7904,32,7,7,7.37
+cw_only,CW Only,7940,32,7,7,1.05
+nn_2opt_oropt,NN + 2-opt/Or-opt,9539,32,10,7,2.53
+nn_only,NN Only,9758,32,10,7,1.57

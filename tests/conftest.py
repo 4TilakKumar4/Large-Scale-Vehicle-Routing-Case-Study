@@ -1,0 +1,1 @@
+collect_ignore_glob = ["vrp_solvers/*.py", "tests/fixtures.py"]
