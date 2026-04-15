@@ -22,12 +22,17 @@ class ClarkeWrightSolver:
     """
 
     def __init__(self, useTwoOpt=True, useOrOpt=True):
-        self.useTwoOpt  = useTwoOpt
-        self.useOrOpt   = useOrOpt
-        self._stats     = None
+        self.useTwoOpt = useTwoOpt
+        self.useOrOpt  = useOrOpt
+        self._stats    = None
 
     def solve(self, dayOrders):
         """Build routes for one day and return the final route list."""
+        if dayOrders.empty:
+            print("  ClarkeWrightSolver: no orders for this day, skipping.")
+            self._stats = {"miles": 0, "routes": 0, "feasible": True, "runtime_s": 0.0}
+            return []
+
         t0 = time.time()
 
         routes = self._build(dayOrders)
@@ -122,11 +127,14 @@ class ClarkeWrightSolver:
         return savings
 
     def _collectStats(self, routes, elapsed):
+        if not routes:
+            return {"miles": 0, "routes": 0, "feasible": True, "runtime_s": round(elapsed, 2)}
+
         totalMiles  = sum(evaluateRoute(r)["total_miles"] for r in routes)
         allFeasible = all(evaluateRoute(r)["overall_feasible"] for r in routes)
         return {
-            "miles":      totalMiles,
-            "routes":     len(routes),
-            "feasible":   allFeasible,
-            "runtime_s":  round(elapsed, 2),
+            "miles":     totalMiles,
+            "routes":    len(routes),
+            "feasible":  allFeasible,
+            "runtime_s": round(elapsed, 2),
         }

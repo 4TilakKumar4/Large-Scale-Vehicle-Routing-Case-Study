@@ -6,6 +6,7 @@ import time
 
 from vrp_solvers.base import (
     DEPOT_ZIP,
+    VAN_CAPACITY,
     applyLocalSearch,
     consolidateRoutes,
     evaluateRoute,
@@ -29,6 +30,11 @@ class NearestNeighborSolver:
 
     def solve(self, dayOrders):
         """Build routes for one day and return the final route list."""
+        if dayOrders.empty:
+            print("  NearestNeighborSolver: no orders for this day, skipping.")
+            self._stats = {"miles": 0, "routes": 0, "feasible": True, "runtime_s": 0.0}
+            return []
+
         t0 = time.time()
 
         routes = self._build(dayOrders)
@@ -55,16 +61,31 @@ class NearestNeighborSolver:
         is opened from the depot.
         """
         unvisited = list(dayOrders.to_dict("records"))
-        routes    = []
+
+        # Identify stops that can never be placed on any route — cube alone exceeds
+        # van capacity. Without this guard the outer while loop would never empty
+        # unvisited and spin forever.
+        infeasible = [
+            stop for stop in unvisited
+            if stop["CUBE"] > VAN_CAPACITY
+        ]
+        if infeasible:
+            ids = [int(s["ORDERID"]) for s in infeasible]
+            print(f"  NearestNeighborSolver: {len(infeasible)} order(s) exceed van capacity "
+                  f"and cannot be routed — skipping order IDs: {ids}")
+            unvisited = [s for s in unvisited if s["CUBE"] <= VAN_CAPACITY]
+
+        routes = []
 
         while unvisited:
             currentRoute = []
             currentZip   = DEPOT_ZIP
+            madeProgress = False
 
             while True:
-                bestStop  = None
-                bestDist  = float("inf")
-                bestIdx   = -1
+                bestStop = None
+                bestDist = float("inf")
+                bestIdx  = -1
 
                 for idx, stop in enumerate(unvisited):
                     candidate = currentRoute + [stop]
@@ -79,15 +100,27 @@ class NearestNeighborSolver:
                     break
 
                 currentRoute.append(bestStop)
-                currentZip = bestStop["TOZIP"]
+                currentZip   = bestStop["TOZIP"]
+                madeProgress = True
                 unvisited.pop(bestIdx)
 
             if currentRoute:
                 routes.append(currentRoute)
+            elif not madeProgress and unvisited:
+                # No stop in unvisited can be appended to any new route — all remaining
+                # stops are individually infeasible as single-stop routes. Break to avoid
+                # an infinite outer loop and report the stranded orders.
+                ids = [int(s["ORDERID"]) for s in unvisited]
+                print(f"  NearestNeighborSolver: {len(unvisited)} order(s) could not be "
+                      f"routed (no feasible single-stop route exists) — order IDs: {ids}")
+                break
 
         return routes
 
     def _collectStats(self, routes, elapsed):
+        if not routes:
+            return {"miles": 0, "routes": 0, "feasible": True, "runtime_s": round(elapsed, 2)}
+
         totalMiles  = sum(evaluateRoute(r)["total_miles"] for r in routes)
         allFeasible = all(evaluateRoute(r)["overall_feasible"] for r in routes)
         return {

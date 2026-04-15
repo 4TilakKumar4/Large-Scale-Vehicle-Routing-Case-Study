@@ -24,7 +24,7 @@ from vrp_solvers.base import (
 from vrp_solvers.clarkeWright import ClarkeWrightSolver
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_FILE = os.path.join(BASE_DIR, "outputs", "routes_map.html")
+OUTPUT_FILE = os.path.join(BASE_DIR, "outputs", "routes_map_baseCase.html")
 
 COUNTRY_CODE = "US"
 
