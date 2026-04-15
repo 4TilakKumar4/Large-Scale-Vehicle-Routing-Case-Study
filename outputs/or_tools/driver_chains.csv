@@ -1,8 +1,8 @@
 driver_number,chain,num_days_worked,weekly_duty_hrs,avg_duty_per_day,is_overnight
-1,Mon[R1] → Tue[R3] → Wed[R5] → Thu[R2] → Fri[R5],5,46.61,9.32,False
-2,Mon[R2] → Tue[R2] → Wed[R6] → Thu[R1] → Fri[R6],5,59.56,11.91,False
-3,Mon[R3] → Tue[R6] → Wed[R2] → Thu[R4] → Fri[R4],5,51.7,10.34,False
-4,Mon[R4] → Tue[R5] → Wed[R3] → Thu[R5] → Fri[R3],5,62.02,12.4,False
-5,Mon[R5] → Tue[R1] → Wed[R4] → Thu[R3] → Fri[R2],5,53.85,10.77,False
-6,Tue[R4] → Wed[R1] → Thu[R6] → Fri[R1],4,44.57,11.14,False
-7,Thu[R7],1,7.15,7.15,False
+1,Mon[R1] → Tue[R3] → Wed[R5] → Thu[R2] → Fri[R5],5,35.84,7.17,False
+2,Mon[R2] → Tue[R2] → Wed[R6] → Thu[R1] → Fri[R6],5,59.29,11.86,False
+3,Mon[R3] → Tue[R6] → Wed[R2] → Thu[R4] → Fri[R1],5,52.17,10.43,False
+4,Mon[R4] → Tue[R5] → Wed[R3] → Thu[R5] → Fri[R3],5,55.35,11.07,False
+5,Mon[R5] → Tue[R1] → Wed[R4] → Thu[R3] → Fri[R4],5,60.58,12.12,False
+6,Tue[R4] → Wed[R1] → Thu[R6] → Fri[R2],4,48.94,12.23,False
+7,Thu[R7],1,11.37,11.37,False
