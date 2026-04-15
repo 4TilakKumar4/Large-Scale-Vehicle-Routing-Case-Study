@@ -389,3 +389,372 @@ class MixedFleetSolver:
             "van_routes": len(vanRoutes),
             "st_routes":  len(stRoutes),
         }
+
+
+class ALNSMixedFleetSolver:
+    """
+    ALNS for the mixed-fleet CVRP (Vans + Straight Trucks).
+
+    Routes are stored as tagged dicts {"type": "van"|"st", "stops": [...]}.
+    This unified representation lets the ALNS destroy/repair loop move flexible
+    stops between fleets — the key improvement over the CW-based MixedFleetSolver.
+
+    Fleet assignment rules are enforced at the repair step:
+      - ST-required stops  → ST routes only
+      - Too-large stops    → Van routes only
+      - Flexible stops     → whichever fleet produces a cheaper feasible insertion
+
+    Seed: MixedFleetSolver (CW + local search + cross-fleet improvement).
+    Call solve() per day; retrieve results with getStats(), getVanRoutes(), getStRoutes().
+    """
+
+    def __init__(self, maxIter=500, removeFrac=0.2, randomSeed=42):
+        self.maxIter    = maxIter
+        self.removeFrac = removeFrac
+        self.randomSeed = randomSeed
+        self._vanRoutes     = []
+        self._stRoutes      = []
+        self._stats         = None
+        self._convergence   = None
+        self._weightHistory = None
+
+    def solve(self, dayOrders):
+        if dayOrders.empty:
+            print("  ALNSMixedFleetSolver: no orders for this day, skipping.")
+            self._vanRoutes     = []
+            self._stRoutes      = []
+            self._stats         = {"miles": 0, "routes": 0, "feasible": True,
+                                   "runtime_s": 0.0, "van_routes": 0, "st_routes": 0,
+                                   "van_miles": 0, "st_miles": 0}
+            self._convergence   = []
+            self._weightHistory = {}
+            return []
+
+        t0 = time.time()
+        import random as _random
+        _random.seed(self.randomSeed)
+
+        # Seed from MixedFleetSolver
+        seed = MixedFleetSolver()
+        seed.solve(dayOrders)
+
+        tagged = (
+            [{"type": "van", "stops": list(r)} for r in seed.getVanRoutes()]
+            + [{"type": "st",  "stops": list(r)} for r in seed.getStRoutes()]
+        )
+
+        best, convergence, weightHistory = self._search(tagged)
+
+        vanRoutes = [r["stops"] for r in best if r["type"] == "van"]
+        stRoutes  = [r["stops"] for r in best if r["type"] == "st"]
+
+        self._vanRoutes     = vanRoutes
+        self._stRoutes      = stRoutes
+        self._convergence   = convergence
+        self._weightHistory = weightHistory
+        self._stats         = self._collectStats(vanRoutes, stRoutes, time.time() - t0)
+        return vanRoutes + stRoutes
+
+    def getStats(self):
+        return self._stats
+
+    def getConvergence(self):
+        return self._convergence
+
+    def getWeightHistory(self):
+        return self._weightHistory
+
+    def getVanRoutes(self):
+        return self._vanRoutes or []
+
+    def getStRoutes(self):
+        return self._stRoutes or []
+
+    def _search(self, initTagged):
+        import random as _random, math as _math
+
+        if not initTagged:
+            return [], [], {}
+
+        current  = [{"type": r["type"], "stops": list(r["stops"])} for r in initTagged]
+        best     = [{"type": r["type"], "stops": list(r["stops"])} for r in initTagged]
+        curMiles = self._totalMiles(current)
+        bestMiles = curMiles
+
+        convergence = [bestMiles]
+        T = curMiles * 0.05 if curMiles > 0 else 1.0
+        coolingRate = 0.999
+
+        destroyOps   = [self._randomRemoval, self._worstRemoval,
+                        self._shawRemoval,   self._routeRemoval]
+        repairOps    = [self._greedyInsertion, self._regretInsertion]
+        destroyNames = ["random", "worst", "shaw", "route"]
+        repairNames  = ["greedy", "regret"]
+
+        dWeights = [1.0] * 4
+        rWeights = [1.0] * 2
+        dScores  = [0.0] * 4
+        rScores  = [0.0] * 2
+        dUses    = [0]   * 4
+        rUses    = [0]   * 2
+
+        weightHistory = {
+            "destroy": {n: [] for n in destroyNames},
+            "repair":  {n: [] for n in repairNames},
+        }
+
+        nStops = sum(len(r["stops"]) for r in current)
+        if nStops == 0:
+            return best, convergence, weightHistory
+
+        UPDATE_FREQ = 50
+        SCORE_BEST = 9; SCORE_BETTER = 5; SCORE_ACCEPTED = 2
+        WEIGHT_DECAY = 0.8
+
+        for iteration in range(self.maxIter):
+            nRemove = max(1, int(nStops * self.removeFrac))
+
+            dIdx = _random.choices(range(4), weights=dWeights, k=1)[0]
+            rIdx = _random.choices(range(2), weights=rWeights, k=1)[0]
+            dUses[dIdx] += 1
+            rUses[rIdx] += 1
+
+            partial, removed = destroyOps[dIdx](current, nRemove)
+            newTagged        = repairOps[rIdx](partial, removed)
+
+            score = 0
+            if self._allFeasible(newTagged):
+                newMiles = self._totalMiles(newTagged)
+                delta    = newMiles - curMiles
+
+                if newMiles < bestMiles:
+                    bestMiles = newMiles
+                    best      = [{"type": r["type"], "stops": list(r["stops"])}
+                                 for r in newTagged]
+                    score     = SCORE_BEST
+                elif newMiles < curMiles:
+                    score = SCORE_BETTER
+                elif _random.random() < _math.exp(-delta / max(T, 1e-10)):
+                    score = SCORE_ACCEPTED
+
+                if score > 0:
+                    current  = newTagged
+                    curMiles = newMiles
+
+            dScores[dIdx] += score
+            rScores[rIdx] += score
+
+            if (iteration + 1) % UPDATE_FREQ == 0:
+                for i in range(4):
+                    if dUses[i] > 0:
+                        dWeights[i] = max(WEIGHT_DECAY * dWeights[i]
+                                          + (1 - WEIGHT_DECAY) * dScores[i] / dUses[i], 0.01)
+                for i in range(2):
+                    if rUses[i] > 0:
+                        rWeights[i] = max(WEIGHT_DECAY * rWeights[i]
+                                          + (1 - WEIGHT_DECAY) * rScores[i] / rUses[i], 0.01)
+                dScores = [0.0]*4; rScores = [0.0]*2
+                dUses   = [0]*4;   rUses   = [0]*2
+
+            convergence.append(bestMiles)
+            T *= coolingRate
+
+            for name, w in zip(destroyNames, dWeights):
+                weightHistory["destroy"][name].append(w)
+            for name, w in zip(repairNames, rWeights):
+                weightHistory["repair"][name].append(w)
+
+        return best, convergence, weightHistory
+
+    def _totalMiles(self, tagged):
+        total = 0
+        for r in tagged:
+            if r["stops"]:
+                total += evaluateMixedRoute(r["stops"], r["type"])["total_miles"]
+        return total
+
+    def _allFeasible(self, tagged):
+        return all(
+            evaluateMixedRoute(r["stops"], r["type"])["overall_feasible"]
+            for r in tagged if r["stops"]
+        )
+
+    def _stopCategory(self, stop):
+        """Classify a stop for fleet-aware repair."""
+        if _isStRequired(stop):
+            return "st_required"
+        if _isTooLargeForST(stop):
+            return "too_large"
+        return "flexible"
+
+    def _randomRemoval(self, tagged, nRemove):
+        import random as _random
+        current  = [{"type": r["type"], "stops": list(r["stops"])} for r in tagged]
+        flatStops = [(ri, pi) for ri, r in enumerate(current)
+                     for pi in range(len(r["stops"]))]
+        if not flatStops:
+            return current, []
+        nRemove = min(nRemove, len(flatStops))
+        chosen  = sorted(_random.sample(flatStops, nRemove), reverse=True)
+        removed = [current[ri]["stops"].pop(pi) for ri, pi in chosen]
+        return [r for r in current if r["stops"]], removed
+
+    def _worstRemoval(self, tagged, nRemove):
+        current = [{"type": r["type"], "stops": list(r["stops"])} for r in tagged]
+        costs   = []
+        for ri, r in enumerate(current):
+            if len(r["stops"]) < 2:
+                continue
+            base = evaluateMixedRoute(r["stops"], r["type"])["total_miles"]
+            for pi in range(len(r["stops"])):
+                reduced      = r["stops"][:pi] + r["stops"][pi+1:]
+                reducedMiles = evaluateMixedRoute(reduced, r["type"])["total_miles"]
+                costs.append((base - reducedMiles, ri, pi))
+        if not costs:
+            return current, []
+        costs.sort(reverse=True)
+        nRemove  = min(nRemove, len(costs))
+        toRemove = sorted(costs[:nRemove], key=lambda x: (x[1], x[2]), reverse=True)
+        removed  = [current[ri]["stops"].pop(pi) for _, ri, pi in toRemove]
+        return [r for r in current if r["stops"]], removed
+
+    def _shawRemoval(self, tagged, nRemove):
+        import random as _random
+        current   = [{"type": r["type"], "stops": list(r["stops"])} for r in tagged]
+        flatStops = [(ri, pi) for ri, r in enumerate(current)
+                     for pi in range(len(r["stops"]))]
+        if not flatStops:
+            return current, []
+        seedRi, seedPi = _random.choice(flatStops)
+        seedZip = current[seedRi]["stops"][seedPi]["TOZIP"]
+        others  = [(ri, pi) for ri, pi in flatStops
+                   if not (ri == seedRi and pi == seedPi)]
+        others.sort(key=lambda x: getDistance(seedZip, current[x[0]]["stops"][x[1]]["TOZIP"]))
+        nRemove = min(nRemove, len(flatStops))
+        chosen  = sorted([(seedRi, seedPi)] + others[:nRemove-1], reverse=True)
+        removed = [current[ri]["stops"].pop(pi) for ri, pi in chosen]
+        return [r for r in current if r["stops"]], removed
+
+    def _routeRemoval(self, tagged, nRemove):
+        current = [{"type": r["type"], "stops": list(r["stops"])} for r in tagged]
+        if not current:
+            return current, []
+        targetIdx = min(range(len(current)), key=lambda i: len(current[i]["stops"]))
+        removed   = current.pop(targetIdx)["stops"]
+        return current, removed
+
+    def _greedyInsertion(self, tagged, removed):
+        current = [{"type": r["type"], "stops": list(r["stops"])} for r in tagged]
+        for stop in removed:
+            cat      = self._stopCategory(stop)
+            bestCost = float("inf")
+            bestRi   = -1
+            bestPos  = -1
+            bestType = None
+
+            for ri, r in enumerate(current):
+                if cat == "st_required" and r["type"] != "st":
+                    continue
+                if cat == "too_large" and r["type"] != "van":
+                    continue
+                base = evaluateMixedRoute(r["stops"], r["type"])["total_miles"] if r["stops"] else 0
+                for pos in range(len(r["stops"]) + 1):
+                    trial  = r["stops"][:pos] + [stop] + r["stops"][pos:]
+                    result = evaluateMixedRoute(trial, r["type"])
+                    if result["overall_feasible"]:
+                        cost = result["total_miles"] - base
+                        if cost < bestCost:
+                            bestCost = cost; bestRi = ri; bestPos = pos; bestType = r["type"]
+
+            # Flexible stops: also try opposite fleet type
+            if cat == "flexible":
+                altType = "st"
+                for ri, r in enumerate(current):
+                    if r["type"] != altType:
+                        continue
+                    base = evaluateMixedRoute(r["stops"], altType)["total_miles"] if r["stops"] else 0
+                    for pos in range(len(r["stops"]) + 1):
+                        trial  = r["stops"][:pos] + [stop] + r["stops"][pos:]
+                        result = evaluateMixedRoute(trial, altType)
+                        if result["overall_feasible"]:
+                            cost = result["total_miles"] - base
+                            if cost < bestCost:
+                                bestCost = cost; bestRi = ri; bestPos = pos; bestType = altType
+
+            if bestRi >= 0:
+                current[bestRi]["stops"].insert(bestPos, stop)
+            else:
+                # Open new route of the appropriate type
+                newType = "st" if cat == "st_required" else "van"
+                current.append({"type": newType, "stops": [stop]})
+
+        return current
+
+    def _regretInsertion(self, tagged, removed):
+        current = [{"type": r["type"], "stops": list(r["stops"])} for r in tagged]
+        pending = list(removed)
+
+        while pending:
+            regrets = []
+            for pIdx, stop in enumerate(pending):
+                cat         = self._stopCategory(stop)
+                insertCosts = []
+
+                for ri, r in enumerate(current):
+                    if cat == "st_required" and r["type"] != "st":
+                        continue
+                    if cat == "too_large" and r["type"] != "van":
+                        continue
+                    fleets = [r["type"]]
+                    if cat == "flexible":
+                        fleets = [r["type"]]
+                    base = evaluateMixedRoute(r["stops"], r["type"])["total_miles"] if r["stops"] else 0
+                    for pos in range(len(r["stops"]) + 1):
+                        trial  = r["stops"][:pos] + [stop] + r["stops"][pos:]
+                        result = evaluateMixedRoute(trial, r["type"])
+                        if result["overall_feasible"]:
+                            insertCosts.append((result["total_miles"] - base, ri, pos))
+
+                insertCosts.sort(key=lambda x: x[0])
+
+                if not insertCosts:
+                    regrets.append((float("inf"), pIdx, stop, -1, -1))
+                elif len(insertCosts) < 2:
+                    regrets.append((0, pIdx, stop, insertCosts[0][1], insertCosts[0][2]))
+                else:
+                    regret = insertCosts[1][0] - insertCosts[0][0]
+                    regrets.append((regret, pIdx, stop, insertCosts[0][1], insertCosts[0][2]))
+
+            regrets.sort(key=lambda x: x[0], reverse=True)
+            _, bestPIdx, stop, ri, pos = regrets[0]
+            pending.pop(bestPIdx)
+
+            if ri >= 0:
+                current[ri]["stops"].insert(pos, stop)
+            else:
+                cat     = self._stopCategory(stop)
+                newType = "st" if cat == "st_required" else "van"
+                current.append({"type": newType, "stops": [stop]})
+
+        return current
+
+    def _collectStats(self, vanRoutes, stRoutes, elapsed):
+        from vrp_solvers.base import evaluateMixedRoute as _emr
+        vanMiles    = sum(_emr(r, "van")["total_miles"] for r in vanRoutes)
+        stMiles     = sum(_emr(r, "st")["total_miles"]  for r in stRoutes)
+        totalMiles  = vanMiles + stMiles
+        totalRoutes = len(vanRoutes) + len(stRoutes)
+        allFeasible = (
+            all(_emr(r, "van")["overall_feasible"] for r in vanRoutes)
+            and all(_emr(r, "st")["overall_feasible"]  for r in stRoutes)
+        )
+        return {
+            "miles":      int(totalMiles),
+            "routes":     totalRoutes,
+            "feasible":   allFeasible,
+            "runtime_s":  round(elapsed, 2),
+            "van_miles":  int(vanMiles),
+            "st_miles":   int(stMiles),
+            "van_routes": len(vanRoutes),
+            "st_routes":  len(stRoutes),
+        }

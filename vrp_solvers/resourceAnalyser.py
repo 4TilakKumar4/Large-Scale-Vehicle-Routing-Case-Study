@@ -62,13 +62,23 @@ class ResourceAnalyser:
         totalRoutes    = sum(len(r) for r in self.routesByDay.values())
         overnightCount = len(self.overnightPairings)
 
+        # Compute driver workload stats across all chains
+        weeklyDuties = [
+            sum(self._routeDutyHours(day, ridx) for day, ridx in chain)
+            for chain in self._driverChains
+        ]
+        avgWeeklyDuty = round(sum(weeklyDuties) / len(weeklyDuties), 2) if weeklyDuties else 0.0
+        maxWeeklyDuty = round(max(weeklyDuties, default=0.0), 2)
+
         return {
-            "min_drivers":      self._minDrivers,
-            "min_trucks_peak":  max(self._trucksByDay.values(), default=0),
-            "trucks_by_day":    dict(self._trucksByDay),
-            "total_routes":     totalRoutes,
-            "overnight_pairs":  overnightCount,
-            "day_cab_routes":   totalRoutes - overnightCount * 2,
+            "min_drivers":        self._minDrivers,
+            "min_trucks_peak":    max(self._trucksByDay.values(), default=0),
+            "trucks_by_day":      dict(self._trucksByDay),
+            "total_routes":       totalRoutes,
+            "overnight_pairs":    overnightCount,
+            "day_cab_routes":     totalRoutes - overnightCount * 2,
+            "avg_weekly_duty_hrs": avgWeeklyDuty,
+            "max_weekly_duty_hrs": maxWeeklyDuty,
         }
 
     def toDataFrame(self):
@@ -88,11 +98,13 @@ class ResourceAnalyser:
         report = self.getReport()
 
         summaryRow = {
-            "min_drivers":     report["min_drivers"],
-            "min_trucks_peak": report["min_trucks_peak"],
-            "total_routes":    report["total_routes"],
-            "overnight_pairs": report["overnight_pairs"],
-            "day_cab_routes":  report["day_cab_routes"],
+            "min_drivers":         report["min_drivers"],
+            "min_trucks_peak":     report["min_trucks_peak"],
+            "total_routes":        report["total_routes"],
+            "overnight_pairs":     report["overnight_pairs"],
+            "day_cab_routes":      report["day_cab_routes"],
+            "avg_weekly_duty_hrs": report["avg_weekly_duty_hrs"],
+            "max_weekly_duty_hrs": report["max_weekly_duty_hrs"],
         }
         for day, count in report["trucks_by_day"].items():
             summaryRow[f"trucks_{day}"] = count
@@ -107,13 +119,17 @@ class ResourceAnalyser:
 
         chainRows = []
         for i, chain in enumerate(self._driverChains, start=1):
-            chainStr    = " → ".join(f"{day}[R{ridx + 1}]" for day, ridx in chain)
-            isOvernight = any(node in overnightNodes for node in chain)
+            chainStr      = " → ".join(f"{day}[R{ridx + 1}]" for day, ridx in chain)
+            isOvernight   = any(node in overnightNodes for node in chain)
+            weeklyDutyHrs = sum(self._routeDutyHours(day, ridx) for day, ridx in chain)
+            daysWorked    = len(chain)
             chainRows.append({
-                "driver_number":   i,
-                "chain":           chainStr,
-                "num_days_worked": len(chain),
-                "is_overnight":    isOvernight,
+                "driver_number":    i,
+                "chain":            chainStr,
+                "num_days_worked":  daysWorked,
+                "weekly_duty_hrs":  round(weeklyDutyHrs, 2),
+                "avg_duty_per_day": round(weeklyDutyHrs / daysWorked, 2) if daysWorked else 0.0,
+                "is_overnight":     isOvernight,
             })
 
         chainsDF = pd.DataFrame(chainRows)
@@ -131,6 +147,8 @@ class ResourceAnalyser:
         print(f"  Peak trucks (any one day): {report['min_trucks_peak']}")
         print(f"  Total routes this week:    {report['total_routes']}")
         print(f"  Overnight pairings:        {report['overnight_pairs']}")
+        print(f"  Avg weekly duty hrs/driver: {report['avg_weekly_duty_hrs']:.1f}h")
+        print(f"  Max weekly duty hrs/driver: {report['max_weekly_duty_hrs']:.1f}h")
 
         print("\n  Trucks by day:")
         for day, count in report["trucks_by_day"].items():
@@ -146,6 +164,13 @@ class ResourceAnalyser:
     def _computeTrucks(self):
         """One truck per route per day — trucks cannot be reused intra-day."""
         return {day: len(routes) for day, routes in self.routesByDay.items()}
+
+    def _routeDutyHours(self, day, ridx):
+        """Return on-duty hours for a single (day, ridx) node."""
+        routes = self.routesByDay.get(day, [])
+        if ridx >= len(routes) or not routes[ridx]:
+            return 0.0
+        return evaluateRoute(routes[ridx])["total_duty"]
 
     def _computeDrivers(self):
         """

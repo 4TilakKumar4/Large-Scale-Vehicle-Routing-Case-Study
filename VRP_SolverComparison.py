@@ -30,7 +30,7 @@ from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
-from vrp_solvers.mixedFleetSolver   import MixedFleetSolver
+from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
 from vrp_solvers.overnightSolver    import (
     OvernightSolver,
     applyOvernightImprovements,
@@ -51,6 +51,7 @@ ALGO_LABELS = {
     "cw_overnight":        "CW + Overnight",
     "alns_overnight":      "ALNS + Overnight",
     "mixed_fleet":         "Mixed Fleet (Van+ST)",
+    "alns_mixed_fleet":    "ALNS Mixed Fleet",
 }
 
 ALGO_COLORS = {
@@ -64,6 +65,7 @@ ALGO_COLORS = {
     "cw_overnight":        "#F72585",
     "alns_overnight":      "#4CC9F0",
     "mixed_fleet":         "#FFD700",
+    "alns_mixed_fleet":    "#FF6B35",
 }
 
 # Day-cab configs that have per-day breakdowns — used in grouped day plots
@@ -117,7 +119,10 @@ def buildOvernightSolvers():
     }
 
 def buildMixedFleetSolvers():
-    return {"mixed_fleet": MixedFleetSolver()}
+    return {
+        "mixed_fleet":      MixedFleetSolver(),
+        "alns_mixed_fleet": ALNSMixedFleetSolver(),
+    }
 
 def runAll(orders, verbose=True):
     """
@@ -128,7 +133,7 @@ def runAll(orders, verbose=True):
     """
     cm      = CostModel()
     solvers = buildSolvers()
-    allKeys = list(solvers.keys()) + ["cw_overnight", "alns_overnight", "mixed_fleet"]
+    allKeys = list(solvers.keys()) + ["cw_overnight", "alns_overnight", "mixed_fleet", "alns_mixed_fleet"]
 
     results = {
         key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0, "runtime_s": 0.0}

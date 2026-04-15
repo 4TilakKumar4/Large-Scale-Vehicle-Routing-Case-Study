@@ -1,6 +1,5 @@
 # Methodology
 ### IE 7200 — Supply Chain Engineering | NHG Vehicle Routing Case Study
-Authors: Tathya Malav Kamdar, Tilak Kumar Byradenahalli Ramesh, Uriel Baron
 
 ## 1. Problem Formulation
 
@@ -113,7 +112,11 @@ For every pair of edges $(i, i+1)$ and $(j, j+1)$ in a route, 2-opt considers re
 
 Or-opt tries relocating chains of 1, 2, or 3 consecutive stops to every other position within the same route. A relocation is accepted if it is feasible and reduces total miles. Applied to routes with 2 or more stops.
 
-### 4.3 Combined local search pipeline
+### 4.3 Note on 3-opt
+
+3-opt removes three edges and reconnects the resulting segments in one of seven possible configurations, exploring a richer neighbourhood than 2-opt at $O(n^3)$ per pass. For the NHG instance sizes (up to 63 orders on Thursday), this amounts to approximately 250,000 edge triplets per iteration across multiple passes — significantly slower than the combined 2-opt + Or-opt pipeline with little practical gain. Bräysy and Gendreau (2005) demonstrate that Or-opt, by relocating chains of one to three consecutive stops, captures the most valuable subset of 3-opt improving moves at a fraction of the computational cost. The 2-opt + Or-opt pipeline used here therefore approximates 3-opt quality without the cubic runtime penalty.
+
+### 4.4 Combined local search pipeline
 
 ```
 twoOptRoute()  →  orOptRoute()
@@ -171,6 +174,14 @@ The overnight extension allows a driver to travel toward the next day's first de
 
 Overnight routes span exactly two consecutive calendar days. Adjacent pairs only: Mon-Tue, Tue-Wed, Wed-Thu, Thu-Fri.
 
+### 6.6 Business framing — cost vs savings
+
+Overnight routing reduces mileage but introduces two costs absent from day-cab operations: the IRS per diem allowance ($80/overnight) and the sleeper cab equipment premium ($60/day above a day-cab). The net annual saving or cost is computed by `CostModel.overnightSummary()` as:
+
+$$\text{Net saving} = (\text{miles saved/week} \times \text{cost per mile} \times 52) - (\text{per diem annual} + \text{sleeper premium annual})$$
+
+A positive result means overnight routing is economically justified. A negative result means the per diem and sleeper costs outweigh the mileage reduction — a realistic outcome when overnight routes save only a small number of miles per pairing.
+
 ## 7. Mixed Fleet — Sub-problem 2
 
 **Implemented in:** `vrp_solvers/mixedFleetSolver.py`
@@ -195,6 +206,26 @@ The MixedFleetSolver runs a unified Clarke-Wright savings across all orders for 
 
 Van and ST routes are evaluated by `evaluateMixedRoute(route, vehicleType)` which uses the appropriate capacity and unload rate for the specified fleet type.
 
+### 7.4 ALNS Mixed Fleet Solver
+
+`ALNSMixedFleetSolver` extends the mixed fleet approach by replacing the CW + local search improvement phase with ALNS operating over a **unified tagged route list**. Each route is represented as a dict `{"type": "van"|"st", "stops": [...]}`. This lets the ALNS destroy/repair loop move flexible stops between fleets — the key improvement over the CW-based solver, which assigns fleet types during construction and only repositions flexible stops via a post-processing cross-fleet pass.
+
+**Seed:** `MixedFleetSolver` (CW + local search + cross-fleet improvement) provides the initial solution. ALNS then refines it.
+
+**Destroy operators:** The same four operators as the base `ALNSSolver` (random, worst, Shaw, route removal), applied to the unified tagged route list. Removed stops carry their fleet constraint category implicitly.
+
+**Repair operators (fleet-aware):** Each removed stop is classified before reinsertion:
+
+| Category | Reinsertion rule |
+|---|---|
+| ST-required | Try ST routes only; open new ST route if no feasible position exists |
+| Too large for ST | Try Van routes only; open new Van route if no feasible position exists |
+| Flexible | Try all routes of both fleet types; insert at cheapest feasible position |
+
+The flexible stop rule is the mechanism that enables genuine cross-fleet reallocation at each iteration — a stop that was on a Van in the seed may migrate to an ST route if the repair operator finds a cheaper feasible position there. This is not possible in `MixedFleetSolver` where fleet assignment is finalised during construction.
+
+**Parameters:** `maxIter=500`, `removeFrac=0.2`, `randomSeed=42` — matching the base `ALNSSolver` for fair comparison.
+
 ## 8. Resource Analysis
 
 **Implemented in:** `vrp_solvers/resourceAnalyser.py`
@@ -215,7 +246,16 @@ $$\text{min drivers} = \text{total routes} - \text{max bipartite matching}$$
 
 Overnight pairings are pre-committed chains removed from the matching problem before solving, then added back as single driver assignments.
 
-### 8.3 DOT 70-hour/8-day rule
+### 8.3 Driver workload sustainability
+
+Beyond the minimum headcount, the `ResourceAnalyser` computes two workload metrics across all driver chains:
+
+- **`avg_weekly_duty_hrs`** — average total on-duty hours per driver across their assigned routes for the week. A sustainable value for dedicated regional drivers is typically 40–55 hours/week.
+- **`max_weekly_duty_hrs`** — the highest weekly duty load assigned to any single driver. If this approaches or exceeds 65–70 hours, the solution may minimise headcount at the expense of driver retention and turnover risk, which is a direct concern for NHG given their stated interest in operational stability.
+
+The driver chains output (`outputs/*/driver_chains.csv`) lists each driver's full weekly assignment and per-day average duty hours, enabling NHG to evaluate whether the solution produces a sustainable and equitable work schedule.
+
+### 8.4 DOT 70-hour/8-day rule
 
 The DOT 70-hour rule is not modelled. The dataset represents a single average week; inter-week driver continuity is outside the project scope.
 
@@ -254,6 +294,10 @@ cm = CostModel(driver_hourly_wage=35.00, cost_per_mile_van=0.80)
 ```
 
 This allows NHG to substitute MAD's actual quoted rates and immediately compare against the internal estimate.
+
+### 9.3 Cost model as a post-processing layer
+
+The solvers in this project minimise total weekly miles as a proxy for cost. Miles and cost are highly correlated for routes of similar length, so this approximation is reasonable for comparing algorithm configurations. A cost-aware objective — minimising the full `CostModel` evaluation at each solver iteration — would be more precise but is computationally prohibitive given that cost evaluation involves per-route duty-hour accounting, overtime detection, and equipment classification. For this instance scale, the correlation between miles and cost is sufficiently tight that a miles-optimal solution is expected to be near cost-optimal. The `VRP_CostAnalysis.py` script verifies this post-hoc by applying the cost model to all ten algorithm configurations.
 
 ## 10. Sensitivity Analysis
 
@@ -320,6 +364,9 @@ The context manager patches module-level attributes directly on the `vrp_solvers
 | `cw_overnight` | CW | 2-opt + Or-opt | — | Yes | Van |
 | `alns_overnight` | CW | 2-opt + Or-opt (seed) | ALNS | Yes | Van |
 | `mixed_fleet` | CW | 2-opt + Or-opt | — | — | Van + ST |
+| `alns_mixed_fleet` | CW | 2-opt + Or-opt (seed) | ALNS | — | Van + ST |
+
+> **Note on 3-opt:** 3-opt is not included as a standalone configuration. Or-opt (Section 4.2) captures the most computationally valuable subset of 3-opt improving moves at $O(n^2)$ per pass rather than $O(n^3)$, making the 2-opt + Or-opt pipeline the preferred choice for this instance scale (Bräysy and Gendreau, 2005).
 
 ## 12. Software Architecture
 
@@ -386,13 +433,18 @@ distances.xlsx   ──┴──► VRP_DataAnalysis.py ──► data/
           ▼              ▼                            ▼
    VRP_BaseCase    VRP_MixedFleet            VRP_SolverComparison
    VRP_OvernightRoutes                               │
-                                         ┌───────────┴───────────┐
-                                         ▼                       ▼
-                                VRP_CostAnalysis    VRP_SensitivityAnalysis
-                                         │                       │
-                                         ▼                       ▼
-                                 outputs/cost_analysis/   outputs/sensitivity/
+   (all accept --no-map)                  ┌──────────┴──────────┐
+                                          ▼                     ▼
+                                 VRP_CostAnalysis   VRP_SensitivityAnalysis
+                                          │                     │
+                                          ▼                     ▼
+                                  outputs/cost_analysis/  outputs/sensitivity/
 ```
+
+Each scenario script (`VRP_BaseCase.py`, `VRP_OvernightRoutes.py`, `VRP_MixedFleet.py`)
+integrates both the solver logic and the Folium map generation. Passing `--no-map` skips
+geocoding and map rendering, which adds 30–90 seconds per run depending on network speed.
+The default (no arguments) produces the full output including the interactive HTML map.
 
 ## 13. References
 

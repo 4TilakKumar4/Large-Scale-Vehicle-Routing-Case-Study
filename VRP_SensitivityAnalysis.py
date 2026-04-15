@@ -47,7 +47,7 @@ import vrp_solvers.base as _base
 
 from vrp_solvers.base import DAYS, loadInputs, evaluateRoute, evaluateMixedRoute
 from vrp_solvers.clarkeWright       import ClarkeWrightSolver
-from vrp_solvers.mixedFleetSolver   import MixedFleetSolver
+from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
 from vrp_solvers.overnightSolver    import OvernightSolver, applyOvernightImprovements
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
 from vrp_solvers.costModel          import CostModel
@@ -198,6 +198,50 @@ def _solveMixedAndMeasure(orders, label):
         "annual_cost":     bd["annual"]["total"],
     }
 
+def _solveALNSMixedAndMeasure(orders, label):
+    """Run ALNSMixedFleetSolver and return a metrics dict."""
+    solver   = ALNSMixedFleetSolver()
+    vanByDay = {}
+    stByDay  = {}
+    totalMiles   = 0
+    totalRoutes  = 0
+    totalRuntime = 0.0
+    allFeasible  = True
+
+    for day in DAYS:
+        dayOrders = orders[orders["DayOfWeek"] == day].copy()
+        solver.solve(dayOrders)
+        stats = solver.getStats()
+        vanByDay[day]  = solver.getVanRoutes()
+        stByDay[day]   = solver.getStRoutes()
+        totalMiles    += stats["miles"]
+        totalRoutes   += stats["routes"]
+        totalRuntime  += stats["runtime_s"]
+        if not stats["feasible"]:
+            allFeasible = False
+
+    combined = {day: vanByDay[day] + stByDay[day] for day in DAYS}
+    analyser = ResourceAnalyser(combined)
+    analyser.analyse()
+    report = analyser.getReport()
+
+    cm = CostModel()
+    bd = cm.weeklyBreakdown(routesByDay=None, vanByDay=vanByDay, stByDay=stByDay)
+
+    return {
+        "label":           label,
+        "weekly_miles":    totalMiles,
+        "annual_miles":    totalMiles * 52,
+        "total_routes":    totalRoutes,
+        "van_routes":      sum(len(vanByDay[d]) for d in DAYS),
+        "st_routes":       sum(len(stByDay[d])  for d in DAYS),
+        "min_drivers":     report["min_drivers"],
+        "peak_trucks":     report["min_trucks_peak"],
+        "weekly_cost":     bd["weekly"]["total"],
+        "annual_cost":     bd["annual"]["total"],
+    }
+
+
 def _feasiblePct(routesByDay):
     total     = 0
     feasible  = 0
@@ -247,7 +291,7 @@ def runGroupA(orders):
     rPeak["param_value"] = 1.25
     rows.append(rPeak)
 
-    # --- A3: ST mix shift ---
+    # --- A3: ST mix shift (CW-based and ALNS-based mixed fleet) ---
     print("  A3: ST mix shift...")
     rng = random.Random(RANDOM_SEED)
 
@@ -264,14 +308,24 @@ def runGroupA(orders):
 
     currentSTFrac = (orders["straight_truck_required"] == "yes").mean()
 
-    for frac, label in [(currentSTFrac, f"Current ({currentSTFrac:.0%})"),
-                        (0.30, "30% ST-required"),
-                        (0.50, "50% ST-required")]:
+    for frac, baseLabel in [(currentSTFrac, f"Current ({currentSTFrac:.0%})"),
+                             (0.30, "30% ST"),
+                             (0.50, "50% ST")]:
         mixed = applySTMix(orders, frac)
-        r = _solveMixedAndMeasure(mixed, label)
+
+        # CW-based mixed fleet
+        r = _solveMixedAndMeasure(mixed, f"CW {baseLabel}")
         r["sensitivity"] = "A3_st_mix_shift"
         r["param_value"] = frac
+        r["solver"]      = "CW_Mixed"
         rows.append(r)
+
+        # ALNS-based mixed fleet
+        ra = _solveALNSMixedAndMeasure(mixed, f"ALNS {baseLabel}")
+        ra["sensitivity"] = "A3_st_mix_shift"
+        ra["param_value"] = frac
+        ra["solver"]      = "ALNS_Mixed"
+        rows.append(ra)
 
     return rows
 

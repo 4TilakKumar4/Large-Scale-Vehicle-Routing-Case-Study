@@ -326,6 +326,91 @@ class CostModel:
                         for k, v in weeklyTotals.items()},
         }
 
+    def overnightSummary(self, baseRoutesByDay, overnightPairings):
+        """
+        Compare overnight-allowed vs no-overnight costs and miles.
+
+        Returns a dict with:
+          miles_saved         : total miles reduction from overnight pairings
+          annual_miles_saved  : miles_saved × 52
+          overnight_cost      : annual per diem + sleeper cab premium for all pairings
+          annual_mileage_saving : annual_miles_saved × cost_per_mile_van
+          net_annual_saving   : annual_mileage_saving - overnight_cost
+          overnight_pairs     : number of overnight pairings
+          drivers_in_sleeper  : same as overnight_pairs (one driver per pairing)
+          per_diem_annual     : overnight_allowance × pairs × 52
+          sleeper_annual      : sleeper_premium_daily × 2 × pairs × 52
+
+        Positive net_annual_saving means overnight routing is cheaper overall.
+        """
+        from vrp_solvers.base import evaluateRoute
+
+        usedRoutes = {}
+        for p in overnightPairings:
+            usedRoutes.setdefault(p["day1"], set()).add(p["route1_idx"])
+            usedRoutes.setdefault(p["day2"], set()).add(p["route2_idx"])
+
+        # Miles without overnight (base routes only, no pairings)
+        baseMiles = sum(
+            evaluateRoute(r)["total_miles"]
+            for day in DAYS
+            for r in baseRoutesByDay.get(day, [])
+        )
+
+        # Miles with overnight (day-cab routes + overnight pairings)
+        overnightMiles = (
+            sum(
+                evaluateRoute(r)["total_miles"]
+                for day in DAYS
+                for idx, r in enumerate(baseRoutesByDay.get(day, []))
+                if idx not in usedRoutes.get(day, set())
+            )
+            + sum(p["results"]["total_miles"] for p in overnightPairings)
+        )
+
+        pairCount          = len(overnightPairings)
+        milesSaved         = round(baseMiles - overnightMiles, 0)
+        annualMilesSaved   = round(milesSaved * self.weeks_per_year, 0)
+        annualMileageSaving = round(annualMilesSaved * self.cost_per_mile_van, 2)
+
+        # Annual cost of overnight operations
+        perDiemAnnual  = round(self.overnight_allowance * pairCount * self.weeks_per_year, 2)
+        sleeperAnnual  = round(self.sleeper_premium_daily * 2 * pairCount * self.weeks_per_year, 2)
+        overnightCost  = round(perDiemAnnual + sleeperAnnual, 2)
+
+        netAnnualSaving = round(annualMileageSaving - overnightCost, 2)
+
+        return {
+            "overnight_pairs":        pairCount,
+            "drivers_in_sleeper":     pairCount,
+            "miles_saved_weekly":     int(milesSaved),
+            "annual_miles_saved":     int(annualMilesSaved),
+            "annual_mileage_saving":  annualMileageSaving,
+            "per_diem_annual":        perDiemAnnual,
+            "sleeper_annual":         sleeperAnnual,
+            "overnight_cost_annual":  overnightCost,
+            "net_annual_saving":      netAnnualSaving,
+        }
+
+    def printOvernightSummary(self, overnightSummaryResult):
+        """Print a formatted overnight cost-vs-savings framing."""
+        s = overnightSummaryResult
+        print("\nOvernight Routes — Cost vs Savings Analysis")
+        print("-" * 60)
+        print(f"  Overnight pairings:              {s['overnight_pairs']}")
+        print(f"  Drivers in sleeper cab (weekly): {s['drivers_in_sleeper']}")
+        print(f"  Weekly miles saved:              {s['miles_saved_weekly']:,}")
+        print(f"  Annual miles saved:              {s['annual_miles_saved']:,}")
+        print()
+        print(f"  Annual mileage saving:         ${s['annual_mileage_saving']:>10,.2f}")
+        print(f"  Annual per diem cost:          ${s['per_diem_annual']:>10,.2f}")
+        print(f"  Annual sleeper cab premium:    ${s['sleeper_annual']:>10,.2f}")
+        print(f"  Total overnight cost (annual): ${s['overnight_cost_annual']:>10,.2f}")
+        print()
+        verdict = "NET SAVING" if s['net_annual_saving'] >= 0 else "NET COST"
+        print(f"  {verdict}:                     ${abs(s['net_annual_saving']):>10,.2f}/year")
+        print()
+
     def printSummary(self, weeklyBreakdownResult, label="Solution"):
         """Print a formatted cost summary from weeklyBreakdown() output."""
         w = weeklyBreakdownResult["weekly"]

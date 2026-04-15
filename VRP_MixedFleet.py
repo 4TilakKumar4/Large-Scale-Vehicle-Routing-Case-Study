@@ -5,14 +5,20 @@ Sub-problem 2: Vans (3,200 ft³) and Straight Trucks (1,400 ft³).
 ST-required orders must travel on a Straight Truck; all others may use either.
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
 
+Usage:
+    python VRP_MixedFleet.py              # solver + interactive Folium map
+    python VRP_MixedFleet.py --no-map    # solver only (faster)
+
 Outputs:
-  outputs/mixed_fleet/route_details.csv      — per-stop timing (Table 3 format + vehicle type)
-  outputs/mixed_fleet/resource_summary.csv   — headline resource metrics
-  outputs/mixed_fleet/driver_chains.csv      — driver chain assignments
-  outputs/mixed_fleet/fleet_analysis.png     — daily miles + capacity utilisation
-  outputs/mixed_fleet/route_map.png          — static 2×5 grid route map
+    outputs/mixed_fleet/route_details.csv            — per-stop timing (vehicle type column)
+    outputs/mixed_fleet/resource_summary.csv         — headline resource metrics
+    outputs/mixed_fleet/driver_chains.csv            — driver chain assignments
+    outputs/mixed_fleet/fleet_analysis.png           — daily miles + capacity utilisation
+    outputs/mixed_fleet/route_map.png                — static 2×5 grid route map
+    outputs/mixed_fleet/routes_map_mixed_fleet.html  — interactive Folium map (unless --no-map)
 """
 
+import argparse
 import os
 
 import matplotlib
@@ -36,11 +42,20 @@ from vrp_solvers.base import (
     toClock,
 )
 from vrp_solvers.mixedFleetSolver import MixedFleetSolver, _getMiles
+
+COUNTRY_CODE = "US"
+MAP_FILE     = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "outputs", "mixed_fleet",
+                            "routes_map_mixed_fleet.html")
 from vrp_solvers.resourceAnalyser import ResourceAnalyser
 from vrp_solvers.costModel        import CostModel
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "mixed_fleet")
+
+VAN_DAY_COLORS = {"Mon":"#e53935","Tue":"#fb8c00","Wed":"#1e88e5","Thu":"#8e24aa","Fri":"#43a047"}
+ST_DAY_COLORS  = {"Mon":"#ff8a80","Tue":"#ffd180","Wed":"#82b1ff","Thu":"#ea80fc","Fri":"#b9f6ca"}
+ROUTE_PALETTE  = ["#E63946","#F4A261","#2A9D8F","#457B9D","#9B5DE5","#F72585","#4CC9F0","#06D6A0"]
 
 DAY_COLORS = {
     "Mon": {"van": "#e53935", "st": "#ff8a80"},
@@ -49,7 +64,6 @@ DAY_COLORS = {
     "Thu": {"van": "#8e24aa", "st": "#ea80fc"},
     "Fri": {"van": "#43a047", "st": "#b9f6ca"},
 }
-
 
 # Console report
 
@@ -87,7 +101,6 @@ def printDayReport(day, vanRoutes, stRoutes):
     print(f"  {day} — Van: {len(vanRoutes)} routes | ST: {len(stRoutes)} routes | "
           f"Total miles: {dayMiles}")
     return dayMiles, dayRoutes
-
 
 def verifySolution(vanByDay, stByDay):
     """Print constraint audit table — mirrors the case paper SolutionCheck tool."""
@@ -157,7 +170,6 @@ def verifySolution(vanByDay, stByDay):
             print(f"     {tag}: {', '.join(iss)}")
     print(f"  {'─' * 58}")
 
-
 def _routeIssues(res, cube, vehicleType):
     cap    = VAN_CAPACITY if vehicleType == "van" else ST_CAPACITY
     issues = []
@@ -167,14 +179,11 @@ def _routeIssues(res, cube, vehicleType):
     if res["total_duty"]  > 14.01:   issues.append(f"DUTY {res['total_duty']:.2f}h")
     return issues
 
-
 def _printRow(tag, veh, stops, res, cube, cap, issues):
     status = "✓ OK" if not issues else "✗ FAIL"
     print(f"  {tag:<14} {veh:<4} {stops:>5} {res['total_miles']:>7} "
           f"{res['total_drive']:>8.2f}h {res['total_duty']:>7.2f}h "
           f"{cube:>6} {cap:>5}  {status}")
-
-
 
 # Exports
 
@@ -208,7 +217,6 @@ def exportRouteDetails(vanByDay, stByDay):
     detailDF.to_csv(outPath, index=False)
     print(f"  Saved: {outPath}")
 
-
 def exportResourceReport(analyser):
     """Write driver chains and truck counts to CSV."""
     summaryDF, chainsDF = analyser.toDataFrame()
@@ -218,7 +226,6 @@ def exportResourceReport(analyser):
     chainsDF.to_csv(chainsPath,   index=False)
     print(f"  Saved: {summaryPath}")
     print(f"  Saved: {chainsPath}")
-
 
 # Plots
 
@@ -301,7 +308,6 @@ def plotFleetAnalysis(vanByDay, stByDay):
     plt.savefig(outPath, dpi=150, bbox_inches="tight", facecolor="#0f1117")
     plt.close()
     print(f"  Saved: {outPath}")
-
 
 def plotRouteMap(vanByDay, stByDay):
     """2×5 static grid — Van (top row) and ST (bottom row) routes per day."""
@@ -393,12 +399,145 @@ def plotRouteMap(vanByDay, stByDay):
     plt.close()
     print(f"  Saved: {outPath}")
 
+def geocodeAllZips(allZips):
+    """Geocode ZIPs to (lat, lon); MDS fallback for misses."""
+    import pgeocode
+    nomi   = pgeocode.Nominatim(COUNTRY_CODE)
+    coords = {}
+    for z in allZips:
+        zipStr = str(int(z)).zfill(5)
+        result = nomi.query_postal_code(zipStr)
+        if not pd.isna(result.latitude) and not pd.isna(result.longitude):
+            coords[z] = (float(result.latitude), float(result.longitude))
+    missing = [z for z in allZips if z not in coords]
+    if missing:
+        mds = _mdsLayout(list(allZips))
+        for z in missing:
+            coords[z] = mds[z]
+    print(f"  Geocoded {len(coords)}/{len(allZips)} ZIPs")
+    return coords
 
 
-# Main
+def _mdsLayout(allZips):
+    from sklearn.manifold import MDS
+    n = len(allZips)
+    D = np.zeros((n, n))
+    for i, za in enumerate(allZips):
+        for j, zb in enumerate(allZips):
+            if i != j:
+                try:   D[i, j] = float(getDistance(za, zb))
+                except: D[i, j] = 999
+    pos  = MDS(n_components=2, dissimilarity="precomputed",
+               random_state=42, normalized_stress="auto").fit_transform(D)
+    span = pos.max(axis=0) - pos.min(axis=0)
+    span[span == 0] = 1
+    coords = {}
+    for i, z in enumerate(allZips):
+        norm = (pos[i] - pos.min(axis=0)) / span
+        coords[z] = (42.3 + (norm[1] - 0.5) * 1.5,
+                     -71.1 + (norm[0] - 0.5) * 2.0)
+    return coords
+
+
+def buildMap(vanByDay, stByDay, zipCoords):
+    """Build a Folium map with Van and ST FeatureGroups per day."""
+    import folium
+    from folium import plugins
+
+    depotCoord = zipCoords.get(DEPOT_ZIP, (42.3, -71.1))
+    m = folium.Map(location=depotCoord, zoom_start=9, tiles="CartoDB positron")
+
+    folium.Marker(
+        location=depotCoord,
+        tooltip=f"<b>DEPOT</b><br>ZIP {DEPOT_ZIP}",
+        icon=folium.Icon(color="black", icon="home", prefix="fa"),
+    ).add_to(m)
+
+    for day in DAYS:
+        vanColor = VAN_DAY_COLORS[day]
+        stColor  = ST_DAY_COLORS[day]
+
+        vanGroup = folium.FeatureGroup(name=f"{day} — Van", show=True)
+        for rIdx, route in enumerate(vanByDay.get(day, [])):
+            routeColor = ROUTE_PALETTE[rIdx % len(ROUTE_PALETTE)]
+            r          = evaluateMixedRoute(route, "van")
+            label      = f"{day} · Van R{rIdx + 1}"
+            waypoints  = ([depotCoord]
+                          + [zipCoords[s["TOZIP"]] for s in route if s["TOZIP"] in zipCoords]
+                          + [depotCoord])
+            folium.PolyLine(
+                locations=waypoints, color=routeColor, weight=3, opacity=0.9,
+                tooltip=(f"{label} | {r['total_miles']} mi | "
+                         f"{len(route)} orders | cube={r['total_cube']}/{VAN_CAPACITY} ft³ | "
+                         f"drive={r['total_drive']}h | duty={r['total_duty']}h"),
+            ).add_to(vanGroup)
+            plugins.AntPath(locations=waypoints, color=routeColor, weight=3,
+                            opacity=0.5, delay=1200, dash_array=[10, 40]).add_to(vanGroup)
+            for seq, stop in enumerate(route, start=1):
+                z = stop["TOZIP"]
+                if z not in zipCoords: continue
+                coord     = zipCoords[z]
+                oid       = int(stop["ORDERID"])
+                popupHtml = (f'<div style="font-family:monospace;font-size:13px;min-width:190px;">'
+                             f"<b>{label}</b><br>Stop #{seq}<br>"
+                             f"Order ID: {oid}<br>ZIP: {int(z)}<br>"
+                             f"Cube: {int(stop['CUBE'])} ft³<br>Vehicle: Van<br>"
+                             f"Feasible: {r['overall_feasible']}</div>")
+                folium.CircleMarker(location=coord, radius=7, color="white", weight=2,
+                    fill=True, fill_color=routeColor, fill_opacity=0.9,
+                    tooltip=f"Van Stop {seq} · Order {oid}",
+                    popup=folium.Popup(popupHtml, max_width=230)).add_to(vanGroup)
+                folium.Marker(location=coord, icon=folium.DivIcon(
+                    html=(f'<div style="font-size:9px;font-weight:bold;color:white;'
+                          f'text-align:center;line-height:14px;">{seq}</div>'),
+                    icon_size=(14, 14), icon_anchor=(7, 7))).add_to(vanGroup)
+        vanGroup.add_to(m)
+
+        stGroup = folium.FeatureGroup(name=f"{day} — ST", show=True)
+        for rIdx, route in enumerate(stByDay.get(day, [])):
+            r     = evaluateMixedRoute(route, "st")
+            label = f"{day} · ST R{rIdx + 1}"
+            waypoints = ([depotCoord]
+                         + [zipCoords[s["TOZIP"]] for s in route if s["TOZIP"] in zipCoords]
+                         + [depotCoord])
+            folium.PolyLine(
+                locations=waypoints, color=stColor, weight=3, opacity=0.9,
+                dash_array="6 4",
+                tooltip=(f"{label} | {r['total_miles']} mi | "
+                         f"{len(route)} orders | cube={r['total_cube']}/{ST_CAPACITY} ft³ | "
+                         f"drive={r['total_drive']}h | duty={r['total_duty']}h"),
+            ).add_to(stGroup)
+            for seq, stop in enumerate(route, start=1):
+                z = stop["TOZIP"]
+                if z not in zipCoords: continue
+                coord     = zipCoords[z]
+                oid       = int(stop["ORDERID"])
+                popupHtml = (f'<div style="font-family:monospace;font-size:13px;min-width:190px;">'
+                             f"<b>{label}</b><br>Stop #{seq}<br>"
+                             f"Order ID: {oid}<br>ZIP: {int(z)}<br>"
+                             f"Cube: {int(stop['CUBE'])} ft³<br>Vehicle: ST<br>"
+                             f"Feasible: {r['overall_feasible']}</div>")
+                folium.CircleMarker(location=coord, radius=7, color="white", weight=2,
+                    fill=True, fill_color=stColor, fill_opacity=0.9,
+                    tooltip=f"ST Stop {seq} · Order {oid}",
+                    popup=folium.Popup(popupHtml, max_width=230)).add_to(stGroup)
+                folium.Marker(location=coord, icon=folium.DivIcon(
+                    html=(f'<div style="font-size:9px;font-weight:bold;color:#0f1117;'
+                          f'text-align:center;line-height:14px;">{seq}</div>'),
+                    icon_size=(14, 14), icon_anchor=(7, 7))).add_to(stGroup)
+        stGroup.add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
+    return m
+
 
 def main():
-    """Run mixed fleet solver for each day, verify, and export all outputs."""
+    """Run mixed fleet solver, report results, export outputs; optionally build Folium map."""
+    parser = argparse.ArgumentParser(description="NHG Mixed Fleet — Van + Straight Truck")
+    parser.add_argument("--no-map", action="store_true",
+                        help="Skip geocoding and map generation")
+    args = parser.parse_args()
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     orders, _ = loadInputs()
@@ -455,6 +594,20 @@ def main():
     exportResourceReport(analyser)
     plotFleetAnalysis(vanByDay, stByDay)
     plotRouteMap(vanByDay, stByDay)
+
+    if not args.no_map:
+        print("\nGeocoding ZIPs...")
+        allZips = {DEPOT_ZIP}
+        for day in DAYS:
+            for route in vanByDay[day] + stByDay[day]:
+                for stop in route:
+                    allZips.add(stop["TOZIP"])
+        zipCoords = geocodeAllZips(allZips)
+        print("Building interactive map...")
+        buildMap(vanByDay, stByDay, zipCoords).save(MAP_FILE)
+        print(f"  Saved: {MAP_FILE}")
+    else:
+        print("\n(Map skipped — run without --no-map to generate)")
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ from vrp_solvers.base import (
 )
 from vrp_solvers.clarkeWright       import ClarkeWrightSolver
 from vrp_solvers.alns               import ALNSSolver
-from vrp_solvers.mixedFleetSolver   import MixedFleetSolver
+from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
 from vrp_solvers.overnightSolver    import OvernightSolver, applyOvernightImprovements
 from vrp_solvers.costModel          import CostModel, SENSITIVITY_RANGES
 
@@ -106,6 +106,19 @@ def buildMixedFleet(orders):
         stByDay[day]  = solver.getStRoutes()
     return None, None, vanByDay, stByDay
 
+def buildALNSMixedFleet(orders):
+    """ALNS mixed fleet Van + ST."""
+    solver   = ALNSMixedFleetSolver()
+    vanByDay = {}
+    stByDay  = {}
+    for day in DAYS:
+        dayOrders = orders[orders["DayOfWeek"] == day].copy()
+        solver.solve(dayOrders)
+        vanByDay[day] = solver.getVanRoutes()
+        stByDay[day]  = solver.getStRoutes()
+    return None, None, vanByDay, stByDay
+
+
 def buildALNS(orders):
     """ALNS metaheuristic, no overnight."""
     solver      = ALNSSolver()
@@ -127,6 +140,7 @@ SCENARIOS = {
     "Mixed Fleet (Van+ST)": buildMixedFleet,
     "ALNS":                 buildALNS,
     "ALNS + Overnight":     buildALNSOvernight,
+    "ALNS Mixed Fleet":     buildALNSMixedFleet,
 }
 
 # Helpers
