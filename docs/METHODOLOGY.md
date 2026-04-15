@@ -1,7 +1,6 @@
 # Methodology
 ### IE 7200 — Supply Chain Engineering | NHG Vehicle Routing Case Study
-
----
+Authors: Tathya Malav Kamdar, Tilak Kumar Byradenahalli Ramesh, Uriel Baron
 
 ## 1. Problem Formulation
 
@@ -19,15 +18,17 @@ The problem is solved independently for each weekday. Orders assigned to Monday 
 
 **Sets:**
 - $N$ — set of store orders (delivery stops)
-- $K$ — set of available vehicles (homogeneous fleet of vans)
+- $K$ — set of available vehicles (homogeneous fleet of vans in Sub-problem 1; mixed fleet in Sub-problem 2)
 - Depot located at ZIP code 01887 (Wilmington, MA)
 
 **Parameters:**
 
 | Symbol | Value | Description |
 |---|---|---|
-| $Q$ | 3,200 ft³ | Van capacity |
-| $r$ | 0.03 min/ft³ | Unload rate |
+| $Q_V$ | 3,200 ft³ | Van capacity |
+| $Q_{ST}$ | 1,400 ft³ | Straight Truck capacity (Sub-problem 2) |
+| $r_V$ | 0.03 min/ft³ | Van unload rate |
+| $r_{ST}$ | 0.043 min/ft³ | Straight Truck unload rate |
 | $t_{min}$ | 30 min | Minimum unload time per stop |
 | $v$ | 40 mph | Driving speed |
 | $[e, l]$ | [08:00, 18:00] | Delivery time window |
@@ -43,9 +44,9 @@ The problem is solved independently for each weekday. Orders assigned to Monday 
 
 A route is feasible if and only if all three of the following hold simultaneously:
 
-**Capacity:** $\sum_{i \in \text{route}} \text{cube}_i \leq Q$
+**Capacity:** $\sum_{i \in \text{route}} \text{cube}_i \leq Q$ (where $Q = Q_V$ or $Q_{ST}$ depending on vehicle type)
 
-**Time windows:** Every stop $i$ must begin and complete service within $[08:00, 18:00]$. Service start time is $\max(\text{arrival}_i, 08:00)$; service completes at start time plus unload time.
+**Time windows:** Every stop $i$ must begin and complete service within $[08:00, 18:00]$. Service start time is $\max(\text{arrival}_i, 08:00)$; service completes at start time plus unload time. The window check applies to service completion, not just arrival.
 
 **DOT HOS:** Total driving $\leq H_d$ and total on-duty time $\leq H_o$, where on-duty includes driving, unloading, and waiting time. Loading at the DC does not count toward on-duty hours.
 
@@ -61,20 +62,16 @@ The floor of zero prevents dispatch before midnight. On-duty time begins accumul
 
 $$t_{\text{unload}}(q) = \frac{\max(t_{\min},\ r \cdot q)}{60} \text{ hours}$$
 
----
-
 ## 2. Route Evaluation
 
-All route evaluation is centralised in `vrp_solvers/base.py::evaluateRoute()`. This function is called millions of times during construction and improvement and is the computational bottleneck of every solver. It simulates the full route from dispatch to depot return and returns:
+All route evaluation is centralised in `vrp_solvers/base.py::evaluateRoute()` for Van routes and `evaluateMixedRoute()` for fleet-typed evaluation. These functions are called millions of times during construction and improvement and are the computational bottleneck of every solver. Each simulates the full route from dispatch to depot return and returns:
 
 - Total miles, drive time, unload time, wait time, duty time
 - Cube loaded
 - Return time
 - Three individual feasibility flags (capacity, window, DOT) and an overall feasibility flag
 
-The function is intentionally simple and stateless — it takes a route list and returns a dict. No caching is applied; correctness is prioritised over speed at this scale.
-
----
+Both functions are intentionally stateless — they take a route list and return a dict.
 
 ## 3. Construction Heuristics
 
@@ -88,299 +85,273 @@ The algorithm starts with the most wasteful possible plan — a separate depot-t
 
 $$s(i, j) = d(\text{depot}, i) + d(\text{depot}, j) - d(i, j)$$
 
-This measures how many miles are saved by visiting $i$ and $j$ on the same route rather than two separate ones. All $\binom{n}{2}$ pairs are computed and sorted descending. Merges are accepted in order when:
+This measures how many miles are saved by visiting $i$ and $j$ on the same route rather than two separate ones. All $\binom{n}{2}$ pairs are computed and sorted descending. Merges are accepted in order when the merged route passes all three feasibility constraints and both orders are at valid endpoints of their current routes.
 
-1. The saving is positive
-2. Both orders are at valid endpoints of their current routes (tail-to-head adjacency)
-3. The merged route passes all three feasibility constraints
+Four merge orientations are attempted at each candidate pair to handle both forward and reversed adjacency.
 
-Four merge orientations are attempted at each candidate pair to handle both forward and reversed adjacency, allowing the algorithm to construct routes in both directions from the depot.
+**Complexity:** $O(n^2 \log n)$ for savings computation.
 
-**Complexity:** $O(n^2 \log n)$ for savings computation; merging is $O(n)$ per accepted pair.
-
-**Route consolidation:** After CW construction, a post-processing phase attempts to eliminate the route with the smallest cube by relocating each of its stops to the cheapest feasible position in any remaining route. This is repeated until no further elimination is possible. Consolidation directly reduces vehicle count.
+**Route consolidation:** After CW construction, a post-processing phase attempts to eliminate the route with the smallest cube by relocating each of its stops to the cheapest feasible position in any remaining route. This is repeated until no further elimination is possible, directly reducing vehicle count.
 
 ### 3.2 Nearest Neighbor Heuristic
 
 **Source:** Classical VRP literature. Implemented in `vrp_solvers/nearestNeighbor.py`.
 
-Starting from the depot, the algorithm repeatedly appends the closest unvisited store whose addition keeps the current route feasible. When no feasible extension exists, the current route is closed and a new one is opened from the depot.
-
-The algorithm is $O(n^2)$ per day and significantly faster than CW, but produces lower-quality solutions because each greedy step forecloses options for future stops. Routes built by NN often end with a long backtrack to the depot because the algorithm commits to nearby stops first without regard for the return journey.
-
-**Guard against infinite loop:** Orders whose cube alone exceeds van capacity are identified before the construction loop and excluded with a warning. A `madeProgress` flag detects iterations where no stop can be placed on any new route, breaking the outer loop rather than spinning indefinitely.
-
----
+Starting from the depot, the algorithm repeatedly appends the closest unvisited store whose addition keeps the current route feasible. When no feasible extension exists, the current route is closed and a new one is opened from the depot. $O(n^2)$ per day.
 
 ## 4. Local Search Improvement
-
-Local search operators are applied after construction to improve route quality within a single vehicle's stops. They are deterministic, fast, and guarantee that the solution is locally optimal with respect to the moves they consider.
 
 ### 4.1 2-opt
 
 **Source:** Lin (1965). Implemented in `vrp_solvers/base.py::twoOptRoute()`.
 
-For every pair of edges $(i, i+1)$ and $(j, j+1)$ in a route, 2-opt considers reversing the segment between them. If the reversal is feasible and reduces total route miles, it is accepted. The process repeats until no improving 2-opt move exists — a condition called **2-optimal**.
-
-2-opt eliminates all crossing edges in a route. Two edges that cross on a map can always be uncrossed by a reversal, and the uncrossed version is always shorter in Euclidean space. The algorithm runs in $O(n^2)$ per pass and typically requires several passes before convergence.
-
-Applied to routes with 4 or more stops.
+For every pair of edges $(i, i+1)$ and $(j, j+1)$ in a route, 2-opt considers reversing the segment between them. If the reversal is feasible and reduces total route miles, it is accepted. Repeats until 2-optimal. Applied to routes with 4 or more stops.
 
 ### 4.2 Or-opt
 
 **Source:** Or (1976). Implemented in `vrp_solvers/base.py::orOptRoute()`.
 
-Or-opt tries relocating **chains** of 1, 2, or 3 consecutive stops to every other position within the same route. A relocation is accepted if it is feasible and reduces total miles. Chain lengths are tried in order: single stops first, then pairs, then triples. The process repeats until no improving move exists.
-
-Or-opt finds improvements that 2-opt cannot — particularly when a small group of stops is in the wrong position in the sequence. It is strictly more powerful than 2-opt for chain lengths 1-3 while remaining intra-route.
-
-Applied to routes with 2 or more stops.
+Or-opt tries relocating chains of 1, 2, or 3 consecutive stops to every other position within the same route. A relocation is accepted if it is feasible and reduces total miles. Applied to routes with 2 or more stops.
 
 ### 4.3 Combined local search pipeline
-
-The standard improvement pipeline applied after construction is:
 
 ```
 twoOptRoute()  →  orOptRoute()
 ```
 
-Applied in `vrp_solvers/base.py::applyLocalSearch()`. Routes with fewer than 4 stops skip 2-opt (no reversals are possible) but still run Or-opt.
-
----
+Applied in `vrp_solvers/base.py::applyLocalSearch()`.
 
 ## 5. Metaheuristics
 
-Metaheuristics guide local search to escape local optima through mechanisms that allow occasional acceptance of worse solutions, maintain memory of previously visited states, or explore large portions of the solution space simultaneously. All three metaheuristics implemented here seed from the CW + consolidation + 2-opt + Or-opt solution to ensure a fair starting point.
+All three metaheuristics seed from the CW + consolidation + 2-opt + Or-opt solution.
 
 ### 5.1 Tabu Search
 
-**Source:** Glover (1986); applied to VRP by Gendreau, Hertz, and Laporte (1994). Implemented in `vrp_solvers/tabuSearch.py`.
+**Source:** Glover (1986); Gendreau, Hertz, and Laporte (1994). Implemented in `vrp_solvers/tabuSearch.py`.
 
-#### Neighbourhood structure
+Considers relocate and swap inter-route moves. The best non-tabu feasible move is accepted at each iteration — even if it worsens the current solution. A tabu list keyed by `(move_type, source_route_idx, source_position)` prevents cycling. The aspiration criterion overrides the tabu list when a move produces a new global best.
 
-Two inter-route move types are considered:
-
-- **Relocate:** Move one stop from its current route to any position in any other route
-- **Swap:** Exchange one stop from route $A$ with one stop from route $B$
-
-At each iteration, all valid relocate and swap moves are generated (up to 200 sampled at random for efficiency), and the best non-tabu feasible move is accepted — even if it worsens the current solution. This forced acceptance of degrading moves is what drives the search out of local optima.
-
-#### Tabu list
-
-Recently performed moves are stored in a tabu list keyed by `(move_type, source_route_idx, source_position)`. A move remains tabu for `tabuTenure` iterations. The tabu list prevents cycling by forbidding the search from immediately reversing a move it just made.
-
-#### Aspiration criterion
-
-A tabu move is accepted if it produces a solution better than the global best found so far. This override ensures the tabu list never blocks a genuinely optimal move.
-
-#### Parameters
-
-| Parameter | Default | Effect |
-|---|---|---|
-| `maxIter` | 300 | Total iterations per day |
-| `tabuTenure` | 15 | Iterations a move remains forbidden |
+| Parameter | Default |
+|---|---|
+| `maxIter` | 300 |
+| `tabuTenure` | 15 |
 
 ### 5.2 Simulated Annealing
 
-**Source:** Kirkpatrick, Gelatt, and Vecchi (1983); applied to VRP by Osman (1993). Implemented in `vrp_solvers/simulatedAnnealing.py`.
+**Source:** Kirkpatrick, Gelatt, and Vecchi (1983); Osman (1993). Implemented in `vrp_solvers/simulatedAnnealing.py`.
 
-#### Mechanism
+Proposes a single random stop relocation per iteration. Acceptance follows the Metropolis criterion: improving moves always accepted; worsening moves accepted with probability $\exp(-\Delta/T)$. Temperature decays geometrically from $T_0$ to $T_{\text{end}}$.
 
-At each iteration, a single random stop relocation is proposed. The acceptance decision follows the Metropolis criterion:
-
-$$P(\text{accept}) = \begin{cases} 1 & \text{if } \Delta \leq 0 \\ \exp\left(-\Delta / T\right) & \text{if } \Delta > 0 \end{cases}$$
-
-where $\Delta = \text{new miles} - \text{current miles}$ and $T$ is the current temperature. Improving moves are always accepted; worsening moves are accepted with probability that decays as temperature falls.
-
-#### Cooling schedule
-
-Temperature follows a geometric decay:
-
-$$T_k = T_0 \cdot \alpha^k, \quad \alpha = \left(\frac{T_{\text{end}}}{T_0}\right)^{1/\text{maxIter}}$$
-
-Early in the run, high temperature means the search explores broadly, accepting many worsening moves. As temperature approaches $T_{\text{end}}$, the algorithm converges toward pure local search. The best solution encountered at any point in the run is tracked and returned.
-
-#### Parameters
-
-| Parameter | Default | Effect |
-|---|---|---|
-| `maxIter` | 2000 | Total iterations per day |
-| `tempStart` | 500.0 | Initial temperature |
-| `tempEnd` | 1.0 | Final temperature |
+| Parameter | Default |
+|---|---|
+| `maxIter` | 2000 |
+| `tempStart` | 500.0 |
+| `tempEnd` | 1.0 |
 
 ### 5.3 Adaptive Large Neighborhood Search
 
 **Source:** Shaw (1998) for LNS; Ropke and Pisinger (2006) for ALNS. Implemented in `vrp_solvers/alns.py`.
 
-#### Core mechanism
+At each iteration a destroy operator removes ~20% of stops and a repair operator reinserts them. Destroy operators: random removal, worst removal, Shaw removal, route removal. Repair operators: greedy insertion, regret-2 insertion. Operator weights are updated every 50 iterations using performance scores (9 for new global best, 5 for improvement, 2 for accepted worse move). Selection uses roulette-wheel sampling.
 
-At each iteration, ALNS performs a **destroy-repair** cycle:
-
-1. A destroy operator removes a subset of stops from the current solution
-2. A repair operator reinserts those stops to rebuild a complete solution
-
-The destroyed portion is typically 20% of all stops (`removeFrac=0.2`). This large neighbourhood allows the algorithm to make structural changes that no sequence of single-stop moves could achieve.
-
-#### Destroy operators
-
-| Operator | Logic |
+| Parameter | Default |
 |---|---|
-| Random removal | Remove $k$ stops chosen uniformly at random |
-| Worst removal | Remove the $k$ stops contributing most to their route's cost |
-| Shaw removal | Remove a seed stop and the $k-1$ geographically closest stops to encourage re-clustering |
-| Route removal | Remove all stops from the smallest route, forcing complete redistribution |
-
-#### Repair operators
-
-| Operator | Logic |
-|---|---|
-| Greedy insertion | Insert each stop at the cheapest feasible position across all routes |
-| Regret-2 insertion | Insert the stop whose cost difference between its best and second-best positions is largest first — reduces route lock-in |
-
-#### Adaptive weight mechanism
-
-Each operator pair maintains a weight updated after every `UPDATE_FREQ=50` iterations:
-
-$$w_i \leftarrow \delta \cdot w_i + (1 - \delta) \cdot \frac{\text{score}_i}{\text{uses}_i}$$
-
-where $\delta=0.8$ is the decay factor. Scores are assigned based on the quality of the improvement found:
-
-| Event | Score |
-|---|---|
-| New global best | 9 |
-| Better than current | 5 |
-| Accepted (worse, via SA criterion) | 2 |
-| Rejected | 0 |
-
-Operator selection uses roulette-wheel sampling proportional to current weights. Weights are floored at 0.01 to prevent any operator from being permanently disabled.
-
-#### Acceptance criterion
-
-ALNS uses a simulated annealing acceptance criterion to occasionally accept worse solutions. Initial temperature is set to 5% of the seed solution's miles, decaying geometrically at rate 0.999 per iteration.
-
-#### Parameters
-
-| Parameter | Default | Effect |
-|---|---|---|
-| `maxIter` | 500 | Total iterations per day |
-| `removeFrac` | 0.2 | Fraction of stops destroyed per iteration |
-
----
+| `maxIter` | 500 |
+| `removeFrac` | 0.2 |
 
 ## 6. Overnight Route Extension
 
 **Implemented in:** `vrp_solvers/overnightSolver.py`
 
-### 6.1 Motivation
+The overnight extension allows a driver to travel toward the next day's first delivery stop after completing day-1 deliveries, take the mandatory 10-hour DOT break en route, and resume on day 2. This can reduce total miles when adjacent-day routes serve geographically proximate stores.
 
-The base case treats each weekday independently, requiring every driver to return to the Wilmington depot on the same calendar day as their deliveries. This is operationally conservative. The overnight extension allows a driver to continue travelling toward the next day's first delivery stop after completing their day-1 deliveries, take the mandatory 10-hour DOT break en route, and resume on day 2.
+**Break placement — latest break rule:** After completing all day-1 deliveries, the driver travels toward the day-2 first stop until their HOS limit is reached, then takes the break. If the driver reaches the day-2 stop before HOS runs out, the break begins on arrival. In both cases, day-2 HOS resets to zero when the break ends.
 
-This can reduce total miles when two adjacent-day routes serve geographically proximate stores — the driver avoids the return trip to Wilmington and a fresh outbound trip the following morning.
+**Pairing algorithm:** For every pair of adjacent-day routes $(r_1, r_2)$, the overnight combination is evaluated. If feasible and shorter than the two separate routes, it is recorded as a candidate. Candidates are sorted by savings and applied greedily — each route participates in at most one pairing.
 
-### 6.2 Delivery window constraint
+Overnight routes span exactly two consecutive calendar days. Adjacent pairs only: Mon-Tue, Tue-Wed, Wed-Thu, Thu-Fri.
 
-All deliveries still occur within the 08:00–18:00 store operating window on their respective calendar day. The overnight break is a logistics event between deliveries, not during them. This constraint is enforced independently for each stop in `serveRouteSegment()`.
+## 7. Mixed Fleet — Sub-problem 2
 
-### 6.3 Break placement — latest break rule
+**Implemented in:** `vrp_solvers/mixedFleetSolver.py`
 
-After completing all day-1 deliveries, the driver travels toward the day-2 first stop until their HOS limit is reached, then takes the break. Two cases:
+Sub-problem 2 introduces a heterogeneous fleet of Vans (3,200 ft³, unload rate 0.030 min/ft³) and Straight Trucks (1,400 ft³, unload rate 0.043 min/ft³).
 
-**Case 1 — Driver reaches day-2 stop before HOS runs out:**
-The driver arrives at the next stop, takes the full 10-hour break on arrival, and begins day-2 service as soon as the break ends (or 08:00 if that is later).
+### 7.1 Fleet assignment rules
 
-**Case 2 — HOS runs out en route:**
-The driver stops wherever the legal travel time runs out, takes the 10-hour break, then continues driving to the day-2 stop.
+Each order falls into exactly one category:
 
-In both cases, day-2 HOS accumulators reset to zero when the break ends.
+| Category | Condition | Assignment |
+|---|---|---|
+| ST-required | `straight_truck_required == "yes"` | Straight Truck only |
+| Too large for ST | `cube > ST_CAPACITY` | Van only |
+| Flexible | All other orders | Either fleet |
 
-### 6.4 Overnight pairing algorithm
+### 7.2 Algorithm
 
-For every pair of adjacent-day routes $(r_1, r_2)$:
+The MixedFleetSolver runs a unified Clarke-Wright savings across all orders for the day, building a combined initial solution. After construction, fleet assignment is finalised: ST-required orders are moved to ST routes, over-capacity orders are confirmed on Van routes, and flexible orders are assigned to whichever fleet minimises total miles. A cross-fleet Or-opt improvement phase then relocates stops between Van and ST routes wherever it reduces miles without violating fleet assignment rules.
 
-1. Evaluate the overnight route combining $r_1$ and $r_2$ using `evaluateOvernightRoute()`
-2. Compare total miles to the sum of the two separate routes
-3. If the overnight combination is feasible and saves miles, record it as a candidate
+### 7.3 Route evaluation
 
-Candidates are sorted by savings descending and applied greedily — each route participates in at most one overnight pairing. This is implemented in `applyOvernightImprovements()`.
+Van and ST routes are evaluated by `evaluateMixedRoute(route, vehicleType)` which uses the appropriate capacity and unload rate for the specified fleet type.
 
-### 6.5 Scope
-
-Overnight routes span exactly two consecutive calendar days. Routes cannot span three or more days. Only adjacent weekday pairs are considered: Mon-Tue, Tue-Wed, Wed-Thu, Thu-Fri.
-
----
-
-## 7. Resource Analysis
+## 8. Resource Analysis
 
 **Implemented in:** `vrp_solvers/resourceAnalyser.py`
 
-### 7.1 Truck requirements
+### 8.1 Truck requirements
 
-One truck is required per simultaneous route. Since MAD loads trailers in advance and all routes dispatch concurrently from the same depot window, the minimum trucks needed on a given day equals the number of routes on that day. The weekly fleet requirement is the maximum across all five days.
+One truck is required per simultaneous route. The weekly fleet requirement equals the maximum daily route count across all five weekdays.
 
-### 7.2 Driver requirements — minimum path cover
+### 8.2 Driver requirements — minimum path cover
 
-The minimum driver count is solved as a **minimum path cover on a directed acyclic graph**:
-
-- **Nodes:** Every (day, route_index) pair
-- **Edges:** A directed edge from route $A$ on day $N$ to route $B$ on day $N+1$ exists when the driver finishing $A$ satisfies the 10-hour break before $B$'s dispatch time:
+The minimum driver count is solved as a minimum path cover on a directed acyclic graph. Nodes are (day, route_index) pairs. A directed edge from route $A$ on day $N$ to route $B$ on day $N+1$ exists when the driver finishing $A$ satisfies the 10-hour break requirement:
 
 $$t_{\text{return}}(A) + 10 \leq t_{\text{dispatch}}(B) + 24$$
 
-The $+24$ converts day-$N+1$ dispatch times (relative to midnight of that day) into absolute hours comparable to a day-$N$ return time.
-
-By König's theorem, the minimum number of paths (drivers) needed to cover all nodes equals:
+By König's theorem:
 
 $$\text{min drivers} = \text{total routes} - \text{max bipartite matching}$$
 
-The maximum bipartite matching is found using augmenting paths (Hopcroft-Karp style) implemented directly in Python — sufficient for the NHG scale of ~10 routes per day.
+Overnight pairings are pre-committed chains removed from the matching problem before solving, then added back as single driver assignments.
 
-### 7.3 Overnight pairings
+### 8.3 DOT 70-hour/8-day rule
 
-Overnight route pairs are pre-committed driver chains — one driver covers both the day-1 and day-2 portions of an overnight pairing. These are removed from the bipartite matching problem before solving, then added back as single pre-committed chains. Each overnight pairing contributes exactly one driver.
+The DOT 70-hour rule is not modelled. The dataset represents a single average week; inter-week driver continuity is outside the project scope.
 
-### 7.4 DOT 70-hour/8-day rule
+## 9. Cost Model
 
-The DOT 70-hour rule applies to a rolling 8-day window and is not modelled in this project. The dataset represents a single average week; inter-week driver continuity is outside the project scope. The 10-hour between-shift break is the binding HOS constraint within the single-week horizon.
+**Implemented in:** `vrp_solvers/costModel.py`
 
----
+All default rates are sourced from 2024-25 industry benchmarks for Northeast US dedicated contract carriers.
 
-## 8. Algorithm Comparison Matrix
+### 9.1 Cost components
 
-| Configuration | Construction | Local Search | Metaheuristic | Overnight |
-|---|---|---|---|---|
-| `cw_only` | Clarke-Wright | — | — | — |
-| `nn_only` | Nearest Neighbor | — | — | — |
-| `cw_2opt_oropt` | Clarke-Wright | 2-opt + Or-opt | — | — |
-| `nn_2opt_oropt` | Nearest Neighbor | 2-opt + Or-opt | — | — |
-| `tabu_search` | CW | 2-opt + Or-opt (seed) | Tabu Search | — |
-| `simulated_annealing` | CW | 2-opt + Or-opt (seed) | Simulated Annealing | — |
-| `alns` | CW | 2-opt + Or-opt (seed) | ALNS | — |
-| `cw_overnight` | CW | 2-opt + Or-opt | — | Yes |
-| `alns_overnight` | CW | 2-opt + Or-opt (seed) | ALNS | Yes |
+| Component | Basis | Default rate | Source |
+|---|---|---|---|
+| Mileage | Per mile driven | $0.725/mi (Van), $0.820/mi (ST) | ATRI 2025 operational costs report (2024 data) |
+| Driver wages | Per on-duty hour; 1.5× above 8h | $32.00/hr base | BLS + Massachusetts ZipRecruiter 2024-25 |
+| Benefits | Fraction of gross wages | 30% loading | ATRI benefits/wages ratio 24.7% + NE premium |
+| Equipment | Per vehicle dispatched per day | $185/day (day-cab), +$60 sleeper, +$25 ST trailer | ATRI $0.39/mi + MA rental market data |
+| Insurance | Per vehicle per operating day | $56/day | NE interstate fleet $15K/yr ÷ 268 operating days |
+| Per diem | Per overnight pairing | $80/overnight | IRS Notice 2024-68, effective October 1 2024 |
 
----
+Mileage cost covers fuel, repair and maintenance, and tyres. Equipment cost covers tractor and trailer lease/depreciation. Insurance covers $1M CSL liability, cargo, and physical damage as required for NE interstate operations. Per diem covers meals and incidental expenses for drivers on overnight routes.
 
-## 9. Software Architecture
+### 9.2 Usage
 
-### 9.1 Package structure
+```python
+cm      = CostModel()                        # default 2024-25 NE rates
+bd      = cm.weeklyBreakdown(routesByDay)    # per-route and weekly totals
+annual  = cm.annualCost(bd["weekly"]["total"])
+cm.printSummary(bd, label="Base Case")
+```
 
-All solver logic lives in the `vrp_solvers/` package. Each algorithm is implemented as a class with a consistent interface:
+Custom rates can be passed at construction time:
+
+```python
+cm = CostModel(driver_hourly_wage=35.00, cost_per_mile_van=0.80)
+```
+
+This allows NHG to substitute MAD's actual quoted rates and immediately compare against the internal estimate.
+
+## 10. Sensitivity Analysis
+
+### 10.1 Cost-rate sensitivity
+
+**Implemented in:** `VRP_CostAnalysis.py`
+
+Varies each of the six cost parameters (mileage rate, driver wage, overtime multiplier, overnight allowance, equipment daily cost, insurance daily cost) across a calibrated low-default-high range. Routes are not re-solved — only the cost calculation changes. Produces sensitivity curves for all five algorithm configurations simultaneously.
+
+### 10.2 Operational sensitivity
+
+**Implemented in:** `VRP_SensitivityAnalysis.py`
+
+Ten operational sensitivities across three groups. Routes are re-solved for each parameter value.
+
+**Group A — Demand:**
+
+| Sensitivity | Parameter range |
+|---|---|
+| Volume scaling | +10%, +20%, +30% on all order cubes |
+| Peak week | Wed + Thu orders scaled +25% |
+| ST mix shift | Current fraction → 30% → 50% ST-required orders |
+
+**Group B — Fleet and operational:**
+
+| Sensitivity | Parameter range |
+|---|---|
+| Van capacity | 2,400 / 3,200 / 3,600 ft³ |
+| ST capacity | 1,000 / 1,400 / 1,800 ft³ |
+| Driving speed | 32 / 40 / 48 mph (±20%) |
+| Unload rate | −20% / baseline / +20% (Van and ST simultaneously) |
+
+**Group C — DOT and schedule:**
+
+| Sensitivity | Parameter range |
+|---|---|
+| HOS safety buffer | 0h / 0.5h / 1h subtracted from MAX_DRIVING and MAX_DUTY |
+| Delivery window | [08:00, 18:00] / [06:00, 20:00] / [00:00, 24:00] |
+| Overnight toggle | No overnight vs overnight-allowed (cost delta) |
+
+### 10.3 ConstantOverride — safe parameter patching
+
+All Group B and C sensitivities require modifying the constants in `vrp_solvers/base.py` at runtime. This is done via the `ConstantOverride` context manager implemented in `VRP_SensitivityAnalysis.py`:
+
+```python
+with ConstantOverride(DRIVING_SPEED=32, MAX_DRIVING=10):
+    routes = solver.solve(dayOrders)
+# All constants guaranteed restored here, even if an exception occurred
+```
+
+The context manager patches module-level attributes directly on the `vrp_solvers.base` module object, which all solver functions read at call time. Source files are never modified. Restoration is guaranteed by a `finally` block — the original values are saved before any patch is applied and are always written back on exit regardless of whether the body succeeded or raised.
+
+## 11. Algorithm Comparison Matrix
+
+| Configuration | Construction | Local Search | Metaheuristic | Overnight | Fleet |
+|---|---|---|---|---|---|
+| `cw_only` | Clarke-Wright | — | — | — | Van |
+| `nn_only` | Nearest Neighbor | — | — | — | Van |
+| `cw_2opt_oropt` | Clarke-Wright | 2-opt + Or-opt | — | — | Van |
+| `nn_2opt_oropt` | Nearest Neighbor | 2-opt + Or-opt | — | — | Van |
+| `tabu_search` | CW | 2-opt + Or-opt (seed) | Tabu Search | — | Van |
+| `simulated_annealing` | CW | 2-opt + Or-opt (seed) | Simulated Annealing | — | Van |
+| `alns` | CW | 2-opt + Or-opt (seed) | ALNS | — | Van |
+| `cw_overnight` | CW | 2-opt + Or-opt | — | Yes | Van |
+| `alns_overnight` | CW | 2-opt + Or-opt (seed) | ALNS | Yes | Van |
+| `mixed_fleet` | CW | 2-opt + Or-opt | — | — | Van + ST |
+
+## 12. Software Architecture
+
+### 12.1 Package structure
+
+All solver logic lives in `vrp_solvers/`. Each algorithm class exposes a consistent interface:
 
 ```python
 solver = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
-routes = solver.solve(dayOrders)        # run algorithm, return routes
-stats  = solver.getStats()              # miles, routes, feasibility, runtime
-curve  = solver.getConvergence()        # convergence curve (None for construction)
+routes = solver.solve(dayOrders)
+stats  = solver.getStats()
+curve  = solver.getConvergence()
 ```
 
-The `OvernightSolver` wraps any base solver and takes full weekly orders rather than a single day:
+`MixedFleetSolver` exposes additional fleet-specific accessors:
+
+```python
+solver = MixedFleetSolver()
+solver.solve(dayOrders)
+vanRoutes = solver.getVanRoutes()
+stRoutes  = solver.getStRoutes()
+stats     = solver.getStats()   # includes van_routes, st_routes, van_miles, st_miles
+```
+
+`OvernightSolver` wraps any base solver and operates on full weekly orders:
 
 ```python
 solver = OvernightSolver(ALNSSolver())
 routesByDay, overnightRoutes, usedRoutes = solver.solve(orders)
 ```
 
-The `ResourceAnalyser` takes a `routesByDay` dict and optional overnight pairings:
+`ResourceAnalyser` takes a `routesByDay` dict and optional overnight pairings:
 
 ```python
 analyser = ResourceAnalyser(routesByDay, overnightPairings=overnightRoutes)
@@ -388,11 +359,20 @@ analyser.analyse()
 report = analyser.getReport()
 ```
 
-### 9.2 Shared base module
+`CostModel` is fully parameterised and works across all three sub-problems:
 
-`vrp_solvers/base.py` is the single source of truth for all constants, data loading, and shared computation. All solver classes import from it — no constant or utility function is defined more than once. The distance matrix is stored as a module-level global (`DIST_MATRIX`) populated by `loadInputs()`, making lookups O(1) without passing the matrix through function arguments.
+```python
+cm = CostModel()
+bd = cm.weeklyBreakdown(routesByDay)                                   # base case
+bd = cm.weeklyBreakdown(routesByDay, overnightPairings=pairings)       # overnight
+bd = cm.weeklyBreakdown(routesByDay=None, vanByDay=v, stByDay=st)      # mixed fleet
+```
 
-### 9.3 Data flow
+### 12.2 Shared base module
+
+`vrp_solvers/base.py` is the single source of truth for all constants, data loading, and shared computation. The distance matrix is stored as a module-level global (`DIST_MATRIX`) populated by `loadInputs()`. All constants are defined once and read by all solvers at call time — enabling the `ConstantOverride` pattern used in sensitivity analysis without modifying source files.
+
+### 12.3 Data flow
 
 ```
 deliveries.xlsx  ──┐
@@ -402,19 +382,19 @@ distances.xlsx   ──┴──► VRP_DataAnalysis.py ──► data/
                          ▼
                     vrp_solvers/base.py (loadInputs)
                          │
-              ┌──────────┼──────────────────────┐
-              ▼          ▼                      ▼
-       VRP_BaseCase  VRP_BaseCase_Map   VRP_SolverComparison
-                                               │
-                                               ▼
-                                        outputs/comparison/
-
-VRP_OvernightRoutes.py ──► reads data/ directly, standalone
+          ┌──────────────┼────────────────────────────┐
+          ▼              ▼                            ▼
+   VRP_BaseCase    VRP_MixedFleet            VRP_SolverComparison
+   VRP_OvernightRoutes                               │
+                                         ┌───────────┴───────────┐
+                                         ▼                       ▼
+                                VRP_CostAnalysis    VRP_SensitivityAnalysis
+                                         │                       │
+                                         ▼                       ▼
+                                 outputs/cost_analysis/   outputs/sensitivity/
 ```
 
----
-
-## 10. References
+## 13. References
 
 1. Clarke, G. and Wright, J.W. (1964). Scheduling of Vehicles from a Central Depot to a Number of Delivery Points. *Operations Research*, 12(4), 568–581.
 

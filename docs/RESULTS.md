@@ -1,5 +1,6 @@
 # Results
 ### IE 7200 — Supply Chain Engineering | NHG Vehicle Routing Case Study
+Authors: Tathya Malav Kamdar, Tilak Kumar Byradenahalli Ramesh, Uriel Baron
 
 > **Status:** Template — tables and findings to be completed after final solver runs.
 
