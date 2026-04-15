@@ -314,5 +314,107 @@ class TestCustomRateOverrides(unittest.TestCase):
         )
 
 
+
+
+class TestOvernightSummary(unittest.TestCase):
+    """Tests for CostModel.overnightSummary() — overnight cost vs savings framing."""
+
+    def setUp(self):
+        from vrp_solvers.clarkeWright import ClarkeWrightSolver
+        from vrp_solvers.overnightSolver import OvernightSolver, applyOvernightImprovements
+        from vrp_solvers.base import DAYS
+
+        self.cm = CostModel()
+
+        solver = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
+        self.routesByDay = {}
+        for day in DAYS:
+            df = MON_DF.copy() if day == "Mon" else makeOrdersDf([])
+            df["DayOfWeek"] = day
+            self.routesByDay[day] = solver.solve(df)
+
+        # Build a minimal fake overnight pairing so the summary has something to compute
+        # Use Mon routes as both day1 and day2 to keep the test self-contained
+        monRoutes = self.routesByDay.get("Mon", [])
+        if len(monRoutes) >= 2:
+            from vrp_solvers.base import evaluateRoute
+            r1 = monRoutes[0]
+            r2 = monRoutes[1]
+            res1 = evaluateRoute(r1)
+            res2 = evaluateRoute(r2)
+            self.overnightPairings = [{
+                "day1": "Mon", "route1_idx": 0,
+                "day2": "Tue", "route2_idx": 0,
+                "route1": r1, "route2": r2,
+                "savings": 5,
+                "results": {
+                    "total_miles": res1["total_miles"] + res2["total_miles"] - 5,
+                    "day1_duty":   res1["total_duty"],
+                    "day2_duty":   res2["total_duty"],
+                    "overall_feasible": True,
+                },
+            }]
+        else:
+            self.overnightPairings = []
+
+        self.summary = self.cm.overnightSummary(self.routesByDay, self.overnightPairings)
+
+    def test_summaryHasRequiredKeys(self):
+        for key in ["overnight_pairs", "drivers_in_sleeper", "miles_saved_weekly",
+                    "annual_miles_saved", "annual_mileage_saving", "per_diem_annual",
+                    "sleeper_annual", "overnight_cost_annual", "net_annual_saving"]:
+            self.assertIn(key, self.summary)
+
+    def test_overnightPairsMatchInput(self):
+        self.assertEqual(self.summary["overnight_pairs"], len(self.overnightPairings))
+
+    def test_driversInSleeperMatchesPairs(self):
+        self.assertEqual(self.summary["drivers_in_sleeper"],
+                         self.summary["overnight_pairs"])
+
+    def test_perDiemAnnualFormula(self):
+        expected = round(
+            self.cm.overnight_allowance * len(self.overnightPairings) * self.cm.weeks_per_year,
+            2
+        )
+        self.assertAlmostEqual(self.summary["per_diem_annual"], expected, places=2)
+
+    def test_sleeperAnnualFormula(self):
+        expected = round(
+            self.cm.sleeper_premium_daily * 2 * len(self.overnightPairings) * self.cm.weeks_per_year,
+            2
+        )
+        self.assertAlmostEqual(self.summary["sleeper_annual"], expected, places=2)
+
+    def test_overnightCostIsPerDiemPlusSleeper(self):
+        expected = round(self.summary["per_diem_annual"] + self.summary["sleeper_annual"], 2)
+        self.assertAlmostEqual(self.summary["overnight_cost_annual"], expected, places=2)
+
+    def test_netSavingIsMillageSavingMinusOvernightCost(self):
+        expected = round(
+            self.summary["annual_mileage_saving"] - self.summary["overnight_cost_annual"], 2
+        )
+        self.assertAlmostEqual(self.summary["net_annual_saving"], expected, places=2)
+
+    def test_emptyPairingsReturnsZeroCosts(self):
+        summary = self.cm.overnightSummary(self.routesByDay, [])
+        self.assertEqual(summary["overnight_pairs"],       0)
+        self.assertEqual(summary["drivers_in_sleeper"],    0)
+        self.assertEqual(summary["per_diem_annual"],       0.0)
+        self.assertEqual(summary["sleeper_annual"],        0.0)
+        self.assertEqual(summary["overnight_cost_annual"], 0.0)
+
+    def test_milesSavedConsistentWithAnnual(self):
+        self.assertEqual(
+            self.summary["annual_miles_saved"],
+            self.summary["miles_saved_weekly"] * self.cm.weeks_per_year
+        )
+
+    def test_annualMileageSavingFormula(self):
+        expected = round(
+            self.summary["annual_miles_saved"] * self.cm.cost_per_mile_van, 2
+        )
+        self.assertAlmostEqual(self.summary["annual_mileage_saving"], expected, places=2)
+
 if __name__ == "__main__":
     unittest.main()

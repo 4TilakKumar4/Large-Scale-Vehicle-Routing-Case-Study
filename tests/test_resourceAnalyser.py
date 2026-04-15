@@ -167,5 +167,82 @@ class TestResourceAnalyserDriverChains(unittest.TestCase):
                 self.assertEqual(len(node), 2)
 
 
+
+
+class TestResourceAnalyserWorkloadMetrics(unittest.TestCase):
+    """Tests for the driver workload metrics added to getReport() and toDataFrame()."""
+
+    def setUp(self):
+        self.routesByDay = buildRoutesByDay()
+        self.analyser    = ResourceAnalyser(self.routesByDay)
+        self.analyser.analyse()
+        self.report      = self.analyser.getReport()
+
+    def test_reportHasAvgWeeklyDutyHrs(self):
+        self.assertIn("avg_weekly_duty_hrs", self.report)
+
+    def test_reportHasMaxWeeklyDutyHrs(self):
+        self.assertIn("max_weekly_duty_hrs", self.report)
+
+    def test_avgWeeklyDutyHrsIsPositive(self):
+        self.assertGreater(self.report["avg_weekly_duty_hrs"], 0.0)
+
+    def test_maxWeeklyDutyHrsIsPositive(self):
+        self.assertGreater(self.report["max_weekly_duty_hrs"], 0.0)
+
+    def test_maxWeeklyDutyHrsGeqAvg(self):
+        self.assertGreaterEqual(
+            self.report["max_weekly_duty_hrs"],
+            self.report["avg_weekly_duty_hrs"]
+        )
+
+    def test_avgWeeklyDutyHrsIsReasonable(self):
+        # Each driver works at most 5 days × 14h = 70h; must be positive
+        self.assertLessEqual(self.report["avg_weekly_duty_hrs"], 70.0)
+
+    def test_maxWeeklyDutyHrsIsReasonable(self):
+        self.assertLessEqual(self.report["max_weekly_duty_hrs"], 70.0)
+
+
+class TestResourceAnalyserChainsDataFrame(unittest.TestCase):
+    """Tests for the new columns in the chainsDF returned by toDataFrame()."""
+
+    def setUp(self):
+        analyser = ResourceAnalyser(buildRoutesByDay())
+        analyser.analyse()
+        _, self.chainsDF = analyser.toDataFrame()
+
+    def test_chainsDFHasWeeklyDutyHrs(self):
+        self.assertIn("weekly_duty_hrs", self.chainsDF.columns)
+
+    def test_chainsDFHasAvgDutyPerDay(self):
+        self.assertIn("avg_duty_per_day", self.chainsDF.columns)
+
+    def test_weeklyDutyHrsPositive(self):
+        self.assertTrue((self.chainsDF["weekly_duty_hrs"] > 0).all())
+
+    def test_avgDutyPerDayPositive(self):
+        self.assertTrue((self.chainsDF["avg_duty_per_day"] > 0).all())
+
+    def test_avgDutyPerDayLeqWeeklyDuty(self):
+        # avg per day <= weekly total for all drivers
+        self.assertTrue(
+            (self.chainsDF["avg_duty_per_day"] <= self.chainsDF["weekly_duty_hrs"]).all()
+        )
+
+    def test_avgDutyPerDayConsistentWithDaysWorked(self):
+        # avg_duty_per_day == weekly_duty_hrs / num_days_worked for each row
+        for _, row in self.chainsDF.iterrows():
+            if row["num_days_worked"] > 0:
+                expected = round(row["weekly_duty_hrs"] / row["num_days_worked"], 2)
+                self.assertAlmostEqual(row["avg_duty_per_day"], expected, places=1)
+
+    def test_summaryDFHasWorkloadColumns(self):
+        analyser = ResourceAnalyser(buildRoutesByDay())
+        analyser.analyse()
+        summaryDF, _ = analyser.toDataFrame()
+        self.assertIn("avg_weekly_duty_hrs", summaryDF.columns)
+        self.assertIn("max_weekly_duty_hrs", summaryDF.columns)
+
 if __name__ == "__main__":
     unittest.main()
