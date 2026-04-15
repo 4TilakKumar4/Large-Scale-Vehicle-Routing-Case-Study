@@ -1,6 +1,5 @@
 # Large-Scale Vehicle Routing: NHG Case Study
 ### IE 7200 — Supply Chain Engineering | Spring 2026
-Authors: Tathya Malav Kamdar, Tilak Kumar Byradenahalli Ramesh, Uriel Baron
 
 ## Overview
 
@@ -26,13 +25,10 @@ project/
 │
 ├── VRP_DataAnalysis.py              ← Phase 1: data cleaning, EDA, and CSV export
 │
-├── VRP_BaseCase.py                  ← Sub-problem 1: base case solver (CW + LS)
-├── VRP_BaseCase_Map.py              ← Sub-problem 1 variant: base case with Folium map
-├── VRP_OvernightRoutes.py           ← Sub-problem 1 extension: overnight DOT break scenario
-├── VRP_OvernightRoutes_Map.py       ← Overnight scenario with Folium map
-│
-├── VRP_MixedFleet.py                ← Sub-problem 2: mixed fleet (Van + Straight Truck)
-├── VRP_MixedFleet_Map.py            ← Sub-problem 2 variant: mixed fleet with Folium map
+├── VRP_BaseCase.py                  ← Sub-problem 1: base case solver (CW + LS) + Folium map
+├── VRP_OvernightRoutes.py           ← Sub-problem 1 extension: overnight DOT break + Folium map
+├── VRP_MixedFleet.py                ← Sub-problem 2: mixed fleet (Van + ST) + Folium map
+│                                       All three accept --no-map to skip geocoding
 │
 ├── VRP_SolverComparison.py          ← Ten-algorithm comparison across all sub-problems
 ├── VRP_CostAnalysis.py              ← Cost estimation and cost-rate sensitivity analysis
@@ -77,9 +73,11 @@ project/
 │
 └── outputs/                         ← All generated plots and CSVs (not committed)
     ├── eda/
-    ├── base_case/
-    ├── overnight/
-    ├── mixed_fleet/
+    ├── base_case/          ← route_details.csv, resource_summary.csv, driver_chains.csv,
+    │                          routes_map_baseCase.html (when --no-map not passed)
+    ├── overnight/          ← same + routes_map_overnight.html
+    ├── mixed_fleet/        ← same + fleet_analysis.png, route_map.png,
+    │                          routes_map_mixed_fleet.html
     ├── comparison/
     ├── cost_analysis/
     └── sensitivity/
@@ -107,19 +105,20 @@ distances.xlsx  ──┴──► VRP_DataAnalysis.py ──► data/
 ```
 
 ```bash
-python VRP_DataAnalysis.py            # always run first
-python VRP_BaseCase.py                # base case routes and cost report
-python VRP_BaseCase_Map.py            # base case + interactive HTML map
-python VRP_OvernightRoutes.py         # overnight scenario
-python VRP_OvernightRoutes_Map.py     # overnight + interactive HTML map
-python VRP_MixedFleet.py              # mixed fleet Van + ST
-python VRP_MixedFleet_Map.py          # mixed fleet + interactive HTML map
-python VRP_SolverComparison.py        # all 10 algorithm configurations (~15-25 min)
-python VRP_CostAnalysis.py            # cost breakdown and cost-rate sensitivity (~20 min)
-python VRP_SensitivityAnalysis.py     # operational sensitivity analysis (~30 min)
+python VRP_DataAnalysis.py                  # always run first
+python VRP_BaseCase.py --no-map             # fast solver run (no geocoding)
+python VRP_BaseCase.py                      # solver + interactive Folium map
+python VRP_OvernightRoutes.py --no-map      # fast overnight solver run
+python VRP_OvernightRoutes.py               # overnight solver + interactive map
+python VRP_MixedFleet.py --no-map           # fast mixed fleet run
+python VRP_MixedFleet.py                    # mixed fleet + interactive map
+python VRP_SolverComparison.py              # all 12 algorithm configurations (~20-30 min)
+python VRP_CostAnalysis.py                  # cost breakdown and sensitivity (~25 min)
+python VRP_SensitivityAnalysis.py           # operational sensitivity analysis (~35 min)
 ```
 
-All scripts must be run from the project root.
+All scripts must be run from the project root. The `--no-map` flag skips geocoding and
+Folium map generation — useful during solver iteration when you only need console output.
 
 ## Running Tests
 
