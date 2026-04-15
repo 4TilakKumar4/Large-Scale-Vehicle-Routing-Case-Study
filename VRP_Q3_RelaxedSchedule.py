@@ -592,7 +592,7 @@ def buildSweepAssignment(orders, store_col="TOZIP", start_idx=0, reverse=False):
     return updated
 
 
-def buildBestSweepSchedule(orders, store_col="TOZIP", lambda_balance=25, n_starts=12):
+def buildBestSweepSchedule(orders, store_col="TOZIP", lambda_balance=25, n_starts=4):
     """
     Try several sweep rotations (clockwise and counterclockwise), solve each candidate,
     and keep the best one by weekly miles, using schedule score as a tie-breaker.
@@ -882,7 +882,7 @@ def mainRelaxedSchedule():
         ORDERS,
         store_col="TOZIP",
         lambda_balance=25,
-        n_starts=12,
+        n_starts=4,
     )
 
     print(
