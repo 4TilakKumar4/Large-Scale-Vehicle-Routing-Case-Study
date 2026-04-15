@@ -1,9 +1,3 @@
-# Generated data — produced by VRP_DataAnalysis.py
-# data/
-
-# Generated outputs — plots, CSVs, HTML maps
-# outputs/
-
 # Python cache files
 __pycache__/
 *.pyc
