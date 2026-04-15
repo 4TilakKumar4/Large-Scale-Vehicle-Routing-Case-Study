@@ -505,7 +505,7 @@ def totalWeeklyMiles(dayStats):
     return sum(dayStats[day]["miles"] for day in DAYS)
 
 
-def relaxDeliveryDays(initialOrders, store_col="TOZIP", lambda_balance=25, max_passes=5, verbose=True):
+def relaxDeliveryDays(initialOrders, store_col="TOZIP", lambda_balance=25, max_passes=10, verbose=True):
     """
     Greedy local search that reduces weekly miles as the primary goal while secondarily improving day-to-day route balance.
     Accepts one improving move per pass and re-solves only the two affected days for speed.
