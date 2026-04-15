@@ -48,6 +48,8 @@ project/
 │   └── resourceAnalyser.py          ← ResourceAnalyser (trucks + drivers)
 │
 ├── tests/                           ← Unit tests (123 tests, no external dependencies)
+│   ├── __init__.py
+│   ├── conftest.py
 │   ├── fixtures.py                  ← Synthetic dataset injected into base module
 │   ├── test_base.py
 │   ├── test_clarkeWright.py
@@ -63,12 +65,12 @@ project/
 │   ├── RESULTS.md
 │   └── DATA_DESCRIPTION.md
 │
-├── data/                            ← Produced by VRP_DataAnalysis.py (not committed)
+├── data/                            ← Produced by VRP_DataAnalysis.py
 │   ├── orders_clean.csv
 │   ├── locations_clean.csv
 │   └── distance_matrix.csv
 │
-└── outputs/                         ← All generated plots and CSVs (not committed)
+└── outputs/                         ← All generated plots and CSVs
     ├── eda/
     ├── comparison/
     └── routes_map.html
@@ -114,7 +116,7 @@ python VRP_OvernightRoutes.py     # overnight scenario, independent of above
 python -m pytest tests/ -v                   # verbose — one line per test
 python -m pytest tests/ -v -s                # also shows print() output (useful for seeing solver warnings)
 python -m pytest tests/test_alns.py -v       # run just one file
-python -m pytest tests/ -k "ALNS" -v        # run only tests whose name contains "ALNS"
+python -m pytest tests/ -k "ALNS" -v         # run only tests whose name contains "ALNS"
 ```
 
 Tests use a synthetic minimal dataset and do not require `data/` to exist. All 123 tests pass on a clean clone before `VRP_DataAnalysis.py` has been run.
