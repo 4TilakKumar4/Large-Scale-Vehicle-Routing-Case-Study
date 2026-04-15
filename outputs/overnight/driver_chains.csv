@@ -1,0 +1,12 @@
+driver_number,chain,num_days_worked,is_overnight
+1,Mon[R2] → Tue[R5],2,True
+2,Mon[R4] → Tue[R6],2,True
+3,Tue[R4] → Wed[R1],2,True
+4,Tue[R2] → Wed[R5],2,True
+5,Wed[R4] → Thu[R6],2,True
+6,Thu[R4] → Fri[R2],2,True
+7,Mon[R1] → Tue[R7] → Wed[R2] → Thu[R5] → Fri[R3],5,False
+8,Mon[R3] → Tue[R3] → Wed[R3] → Thu[R3] → Fri[R4],5,False
+9,Mon[R5] → Tue[R1] → Wed[R6] → Thu[R2] → Fri[R5],5,False
+10,Wed[R7] → Thu[R1] → Fri[R6],3,False
+11,Thu[R7] → Fri[R1],2,False

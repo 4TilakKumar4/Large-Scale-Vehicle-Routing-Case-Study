@@ -9,7 +9,7 @@ Driver count : minimum path cover across the 5-day route graph.
                Overnight pairings are pre-committed chains and are resolved first.
 """
 
-import os
+import pandas as pd
 
 from vrp_solvers.base import (
     BREAK_TIME,
@@ -60,17 +60,65 @@ class ResourceAnalyser:
         if not self._analysed:
             raise RuntimeError("Call analyse() before getReport().")
 
-        totalRoutes  = sum(len(r) for r in self.routesByDay.values())
+        totalRoutes    = sum(len(r) for r in self.routesByDay.values())
         overnightCount = len(self.overnightPairings)
 
         return {
-            "min_drivers":          self._minDrivers,
-            "min_trucks_peak":      max(self._trucksByDay.values(), default=0),
-            "trucks_by_day":        dict(self._trucksByDay),
-            "total_routes":         totalRoutes,
-            "overnight_pairs":      overnightCount,
-            "day_cab_routes":       totalRoutes - overnightCount * 2,
+            "min_drivers":      self._minDrivers,
+            "min_trucks_peak":  max(self._trucksByDay.values(), default=0),
+            "trucks_by_day":    dict(self._trucksByDay),
+            "total_routes":     totalRoutes,
+            "overnight_pairs":  overnightCount,
+            "day_cab_routes":   totalRoutes - overnightCount * 2,
         }
+
+    def toDataFrame(self):
+        """
+        Return resource results as two DataFrames: (summaryDF, chainsDF).
+
+        summaryDF — one row with headline metrics:
+            min_drivers, min_trucks_peak, total_routes,
+            overnight_pairs, day_cab_routes, trucks_Mon … trucks_Fri
+
+        chainsDF — one row per driver:
+            driver_number, chain, num_days_worked, is_overnight
+        """
+        if not self._analysed:
+            raise RuntimeError("Call analyse() before toDataFrame().")
+
+        report = self.getReport()
+
+        summaryRow = {
+            "min_drivers":     report["min_drivers"],
+            "min_trucks_peak": report["min_trucks_peak"],
+            "total_routes":    report["total_routes"],
+            "overnight_pairs": report["overnight_pairs"],
+            "day_cab_routes":  report["day_cab_routes"],
+        }
+        for day, count in report["trucks_by_day"].items():
+            summaryRow[f"trucks_{day}"] = count
+
+        summaryDF = pd.DataFrame([summaryRow])
+
+        # overnight pairing indices for flagging
+        overnightNodes = set()
+        for pairing in self.overnightPairings:
+            overnightNodes.add((pairing["day1"], pairing["route1_idx"]))
+            overnightNodes.add((pairing["day2"], pairing["route2_idx"]))
+
+        chainRows = []
+        for i, chain in enumerate(self._driverChains, start=1):
+            chainStr    = " → ".join(f"{day}[R{ridx + 1}]" for day, ridx in chain)
+            isOvernight = any(node in overnightNodes for node in chain)
+            chainRows.append({
+                "driver_number":   i,
+                "chain":           chainStr,
+                "num_days_worked": len(chain),
+                "is_overnight":    isOvernight,
+            })
+
+        chainsDF = pd.DataFrame(chainRows)
+        return summaryDF, chainsDF
 
     def printReport(self):
         """Print a formatted resource summary to stdout."""
@@ -80,9 +128,9 @@ class ResourceAnalyser:
         report = self.getReport()
         print("\nResource Requirements")
         print("-" * 60)
-        print(f"  Minimum drivers needed:   {report['min_drivers']}")
+        print(f"  Minimum drivers needed:    {report['min_drivers']}")
         print(f"  Peak trucks (any one day): {report['min_trucks_peak']}")
-        print(f"  Total routes this week:   {report['total_routes']}")
+        print(f"  Total routes this week:    {report['total_routes']}")
         print(f"  Overnight pairings:        {report['overnight_pairs']}")
 
         print("\n  Trucks by day:")
@@ -94,11 +142,12 @@ class ResourceAnalyser:
             chainStr = " → ".join(f"{day}[R{ridx + 1}]" for day, ridx in chain)
             print(f"    Driver {i:2d}: {chainStr}")
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
     def _computeTrucks(self):
-        """
-        One truck per route per day — trucks cannot be reused intra-day because
-        MAD loads trailers in advance and routes run concurrently.
-        """
+        """One truck per route per day — trucks cannot be reused intra-day."""
         return {day: len(routes) for day, routes in self.routesByDay.items()}
 
     def _computeDrivers(self):
@@ -112,30 +161,21 @@ class ResourceAnalyser:
 
         Overnight pairings are pre-committed chains removed before matching.
         """
-        # --- collect per-route timing ---
-        routeTiming = {}   # (day, ridx) → {"dispatch": float, "return": float}
+        routeTiming = {}
         for day, routes in self.routesByDay.items():
             for ridx, route in enumerate(routes):
                 if not route:
                     continue
-                dispatchTime = self._dispatchTime(route)
-                returnTime   = evaluateRoute(route)["return_time"]
                 routeTiming[(day, ridx)] = {
-                    "dispatch": dispatchTime,
-                    "return":   returnTime,
+                    "dispatch": self._dispatchTime(route),
+                    "return":   evaluateRoute(route)["return_time"],
                 }
 
-        # --- mark overnight-consumed routes ---
-        # overnight driver covers both day1 and day2 routes; neither enters matching
         overnightConsumed = set()
         for pairing in self.overnightPairings:
-            d1, r1 = pairing["day1"], pairing["route1_idx"]
-            d2, r2 = pairing["day2"], pairing["route2_idx"]
-            overnightConsumed.add((d1, r1))
-            overnightConsumed.add((d2, r2))
+            overnightConsumed.add((pairing["day1"], pairing["route1_idx"]))
+            overnightConsumed.add((pairing["day2"], pairing["route2_idx"]))
 
-        # --- build eligibility edges for adjacent-day pairs ---
-        # edges[left_node] = list of right_nodes the same driver could cover next
         edges = {}
         for d1, d2 in ADJACENT_DAYS:
             leftRoutes  = [
@@ -152,16 +192,13 @@ class ResourceAnalyser:
                 leftReturn = routeTiming.get(leftNode, {}).get("return", float("inf"))
 
                 for rightNode in rightRoutes:
-                    rightDispatch = routeTiming.get(rightNode, {}).get("dispatch", float("inf"))
-                    # Day 2 times are relative to midnight of day 2, so add 24 hours
-                    # to compare against a day 1 return time correctly
+                    rightDispatch         = routeTiming.get(rightNode, {}).get("dispatch", float("inf"))
                     rightDispatchAbsolute = rightDispatch + 24.0
                     earliestAvailable     = leftReturn + BREAK_TIME
 
                     if earliestAvailable <= rightDispatchAbsolute:
                         edges[leftNode].append(rightNode)
 
-        # --- max bipartite matching via augmenting paths ---
         allNodes = [
             (day, ridx)
             for day in DAYS
@@ -169,8 +206,8 @@ class ResourceAnalyser:
             if (day, ridx) not in overnightConsumed
         ]
 
-        matchLeft  = {}   # left_node  → matched right_node
-        matchRight = {}   # right_node → matched left_node
+        matchLeft  = {}
+        matchRight = {}
 
         def augment(node, visited):
             for candidate in edges.get(node, []):
@@ -184,18 +221,13 @@ class ResourceAnalyser:
             return False
 
         for node in allNodes:
-            # Only left-side nodes (not the last day) initiate augmentation
             if node[0] != DAYS[-1]:
                 augment(node, set())
 
-        matchingSize = len(matchLeft)
-
-        # --- reconstruct driver chains ---
-        # start from unmatched left-side nodes and follow the match chain forward
+        matchingSize  = len(matchLeft)
         chains        = []
         chainedNodes  = set()
 
-        # overnight chains first
         for pairing in self.overnightPairings:
             d1, r1 = pairing["day1"], pairing["route1_idx"]
             d2, r2 = pairing["day2"], pairing["route2_idx"]
@@ -203,11 +235,9 @@ class ResourceAnalyser:
             chainedNodes.add((d1, r1))
             chainedNodes.add((d2, r2))
 
-        # day-cab chains from matching
         for node in allNodes:
             if node in chainedNodes:
                 continue
-            # only start a chain from a node that has no predecessor in the matching
             if node not in matchRight:
                 chain   = [node]
                 current = node
@@ -219,7 +249,6 @@ class ResourceAnalyser:
                     current = nxt
                 chains.append(chain)
 
-        # any remaining nodes not captured above get their own single-day chain
         for node in allNodes:
             if node not in chainedNodes:
                 chains.append([node])
@@ -231,7 +260,6 @@ class ResourceAnalyser:
         return minDrivers, chains
 
     def _dispatchTime(self, route):
-        """Recompute dispatch time from the first stop — mirrors the logic in evaluateRoute."""
         if not route:
             return float(WINDOW_OPEN)
         firstZip   = route[0]["TOZIP"]

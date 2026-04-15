@@ -2,6 +2,11 @@
 VRP_BaseCase_Map.py — Runs CW + local search and renders an interactive Folium route map.
 
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
+Outputs:
+  outputs/base_case/routes_map_baseCase.html  — interactive Folium map
+  outputs/base_case/route_details.csv          — per-stop timing in Table 3 format
+  outputs/base_case/resource_summary.csv       — headline resource metrics
+  outputs/base_case/driver_chains.csv          — driver chain assignments
 """
 
 import os
@@ -14,17 +19,21 @@ from folium import plugins
 from sklearn.manifold import MDS
 
 from vrp_solvers.base import (
+    DATA_DIR,
     DAYS,
     DEPOT_ZIP,
+    detailedRouteTrace,
     evaluateRoute,
     getDistance,
     loadInputs,
     routeIds,
 )
 from vrp_solvers.clarkeWright import ClarkeWrightSolver
+from vrp_solvers.resourceAnalyser import ResourceAnalyser
 
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_FILE = os.path.join(BASE_DIR, "outputs", "routes_map_baseCase.html")
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "base_case")
+MAP_FILE   = os.path.join(OUTPUT_DIR, "routes_map_baseCase.html")
 
 COUNTRY_CODE = "US"
 
@@ -62,7 +71,7 @@ def geocodeAllZips(allZips):
 
     missing = [z for z in allZips if z not in coords]
     if missing:
-        print(f"  {len(missing)} ZIPs not found - filling with MDS layout...")
+        print(f"  {len(missing)} ZIPs not found — filling with MDS layout...")
         mdsCoords = mdsLayout(list(allZips))
         for z in missing:
             coords[z] = mdsCoords[z]
@@ -71,10 +80,7 @@ def geocodeAllZips(allZips):
 
 
 def mdsLayout(allZips):
-    """
-    Fallback geocoder: fit a 2-component MDS on road distances and
-    scale the result to a lat/lon bounding box centred on Boston.
-    """
+    """Fallback geocoder: MDS on road distances scaled to a lat/lon box centred on Boston."""
     n = len(allZips)
     D = np.zeros((n, n))
 
@@ -226,9 +232,40 @@ def buildMap(routesByDay, zipCoords):
     return m
 
 
+def exportRouteDetails(routesByDay):
+    """Write per-stop timing CSV for all routes. Output: outputs/base_case/route_details.csv"""
+    locsPath = os.path.join(DATA_DIR, "locations_clean.csv")
+    locs     = pd.read_csv(locsPath) if os.path.exists(locsPath) else None
+
+    allRows = []
+    for day in DAYS:
+        for routeNum, route in enumerate(routesByDay.get(day, []), start=1):
+            allRows.extend(detailedRouteTrace(route, day, routeNum, locs))
+
+    detailDF = pd.DataFrame(allRows, columns=[
+        "day", "route_number", "stop_sequence", "order_id",
+        "location", "arrival_time", "departure_time", "delivery_volume_cuft",
+    ])
+
+    outPath = os.path.join(OUTPUT_DIR, "route_details.csv")
+    detailDF.to_csv(outPath, index=False)
+    print(f"  Saved: {outPath}")
+
+
+def exportResourceReport(analyser):
+    """Write resource summary and driver chains. Output: outputs/base_case/"""
+    summaryDF, chainsDF = analyser.toDataFrame()
+    summaryPath = os.path.join(OUTPUT_DIR, "resource_summary.csv")
+    chainsPath  = os.path.join(OUTPUT_DIR, "driver_chains.csv")
+    summaryDF.to_csv(summaryPath, index=False)
+    chainsDF.to_csv(chainsPath,   index=False)
+    print(f"  Saved: {summaryPath}")
+    print(f"  Saved: {chainsPath}")
+
+
 def main():
-    """Build CW + local search routes for each day, report, then render the Folium map."""
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+    """Build CW + local search routes, render map, and export all outputs."""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     orders, _ = loadInputs()
     solver    = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
@@ -255,6 +292,10 @@ def main():
     print("Total orders fulfilled:", weeklyTotalOrders)
     print("Total miles:",            weeklyTotalMiles)
 
+    analyser = ResourceAnalyser(routesByDay)
+    analyser.analyse()
+    analyser.printReport()
+
     print("\nGeocoding ZIPs...")
     allZips = {DEPOT_ZIP}
     for routes in routesByDay.values():
@@ -266,8 +307,12 @@ def main():
 
     print("Building map...")
     m = buildMap(routesByDay, zipCoords)
-    m.save(OUTPUT_FILE)
-    print(f"Map saved to: {OUTPUT_FILE}")
+    m.save(MAP_FILE)
+    print(f"  Saved: {MAP_FILE}")
+
+    print("\nExporting CSVs...")
+    exportRouteDetails(routesByDay)
+    exportResourceReport(analyser)
 
 
 if __name__ == "__main__":

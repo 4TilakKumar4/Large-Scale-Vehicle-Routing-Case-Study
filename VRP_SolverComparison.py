@@ -27,6 +27,7 @@ from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
 from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
+from vrp_solvers.mixedFleetSolver   import MixedFleetSolver
 from vrp_solvers.overnightSolver    import (
     OvernightSolver,
     applyOvernightImprovements,
@@ -45,6 +46,8 @@ ALGO_LABELS = {
     "alns":                "ALNS",
     "cw_overnight":        "CW + Overnight",
     "alns_overnight":      "ALNS + Overnight",
+    "mixed_fleet":         "Mixed Fleet (Van + ST)",
+    "alns_overnight":      "ALNS + Overnight",
 }
 
 ALGO_COLORS = {
@@ -56,6 +59,8 @@ ALGO_COLORS = {
     "simulated_annealing": "#E63946",
     "alns":                "#9B5DE5",
     "cw_overnight":        "#F72585",
+    "alns_overnight":      "#4CC9F0",
+    "mixed_fleet":         "#FFD700",
     "alns_overnight":      "#4CC9F0",
 }
 
@@ -110,10 +115,15 @@ def buildOvernightSolvers():
     }
 
 
+def buildMixedFleetSolvers():
+    """Return the mixed fleet solver."""
+    return {"mixed_fleet": MixedFleetSolver()}
+
+
 def runAll(orders, verbose=True):
     """Run every solver on every day; return results dict, convergence data, and resource reports."""
     solvers    = buildSolvers()
-    allKeys  = list(solvers.keys()) + ["cw_overnight", "alns_overnight"]
+    allKeys  = list(solvers.keys()) + ["cw_overnight", "alns_overnight", "mixed_fleet"]
     results  = {key: {"days": {}, "weekly_miles": 0, "weekly_routes": 0,
                       "runtime_s": 0.0} for key in allKeys}
     convergence     = {}
@@ -210,6 +220,54 @@ def runAll(orders, verbose=True):
             print(f"    miles={finalMiles:6,} | routes={finalRoutes:2d} | "
                   f"overnight_pairs={len(overnightRoutes)} | feasible={allFeasible} | "
                   f"drivers={report['min_drivers']} | trucks={report['min_trucks_peak']}")
+
+    # Mixed fleet — runs per day like regular solvers but uses MixedFleetSolver
+    mixedSolvers = buildMixedFleetSolvers()
+    for mKey, mSolver in mixedSolvers.items():
+        if verbose:
+            print(f"\n  {ALGO_LABELS.get(mKey, mKey)}")
+
+        mRoutesByDay = {}
+        totalMiles   = 0
+        totalRoutes  = 0
+        totalRuntime = 0.0
+        allFeasible  = True
+
+        for day in DAYS:
+            dayOrders = orders[orders["DayOfWeek"] == day].copy()
+            mSolver.solve(dayOrders)
+            stats = mSolver.getStats()
+
+            mRoutesByDay[day]  = mSolver.getVanRoutes() + mSolver.getStRoutes()
+            totalMiles        += stats["miles"]
+            totalRoutes       += stats["routes"]
+            totalRuntime      += stats["runtime_s"]
+            if not stats["feasible"]:
+                allFeasible = False
+
+            if verbose:
+                print(f"    {day}: miles={stats['miles']:6,} | "
+                      f"van={stats['van_routes']} routes | "
+                      f"st={stats['st_routes']} routes | "
+                      f"{stats['runtime_s']:.1f}s")
+
+        analyser = ResourceAnalyser(mRoutesByDay)
+        analyser.analyse()
+        report = analyser.getReport()
+
+        results[mKey] = {
+            "days":            {},
+            "weekly_miles":    totalMiles,
+            "weekly_routes":   totalRoutes,
+            "runtime_s":       round(totalRuntime, 2),
+            "min_drivers":     report["min_drivers"],
+            "min_trucks_peak": report["min_trucks_peak"],
+        }
+        resourceReports[mKey] = report
+
+        if verbose:
+            print(f"    Resources: {report['min_drivers']} drivers | "
+                  f"{report['min_trucks_peak']} peak trucks")
 
     return results, convergence, alnsWeightHist, resourceReports
 

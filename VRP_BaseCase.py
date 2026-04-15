@@ -2,12 +2,19 @@
 VRP_BaseCase.py — Runs Clarke-Wright + 2-opt + or-opt on the NHG dataset.
 
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
+Outputs:
+  outputs/base_case/route_details.csv   — per-stop timing in Table 3 format
+  outputs/base_case/resource_report.csv — driver chains and truck counts
 """
 
 import os
 
+import pandas as pd
+
 from vrp_solvers.base import (
+    DATA_DIR,
     DAYS,
+    detailedRouteTrace,
     evaluateRoute,
     loadInputs,
     routeIds,
@@ -44,8 +51,53 @@ def printDayReport(day, routes):
     return dayTotalMiles, dayTotalOrders
 
 
+def exportRouteDetails(routesByDay):
+    """
+    Write per-stop timing CSV in Table 3 format for all routes across all days.
+    Output: outputs/base_case/route_details.csv
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    locsPath = os.path.join(DATA_DIR, "locations_clean.csv")
+    locs     = pd.read_csv(locsPath) if os.path.exists(locsPath) else None
+
+    allRows = []
+    for day in DAYS:
+        for routeNum, route in enumerate(routesByDay.get(day, []), start=1):
+            allRows.extend(detailedRouteTrace(route, day, routeNum, locs))
+
+    detailDF = pd.DataFrame(allRows, columns=[
+        "day", "route_number", "stop_sequence", "order_id",
+        "location", "arrival_time", "departure_time", "delivery_volume_cuft",
+    ])
+
+    outPath = os.path.join(OUTPUT_DIR, "route_details.csv")
+    detailDF.to_csv(outPath, index=False)
+    print(f"  Saved: {outPath}")
+
+
+def exportResourceReport(analyser):
+    """
+    Write driver chains and truck counts to CSV.
+    Output: outputs/base_case/resource_report.csv (summary) and
+            outputs/base_case/driver_chains.csv
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    summaryDF, chainsDF = analyser.toDataFrame()
+
+    summaryPath = os.path.join(OUTPUT_DIR, "resource_summary.csv")
+    chainsPath  = os.path.join(OUTPUT_DIR, "driver_chains.csv")
+
+    summaryDF.to_csv(summaryPath, index=False)
+    chainsDF.to_csv(chainsPath,   index=False)
+
+    print(f"  Saved: {summaryPath}")
+    print(f"  Saved: {chainsPath}")
+
+
 def main():
-    """Build CW + local search routes for each day, report results, and analyse resources."""
+    """Build CW + local search routes for each day, report results, and export outputs."""
     orders, _ = loadInputs()
     solver    = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
 
@@ -74,6 +126,10 @@ def main():
     analyser = ResourceAnalyser(routesByDay)
     analyser.analyse()
     analyser.printReport()
+
+    print("\nExporting outputs...")
+    exportRouteDetails(routesByDay)
+    exportResourceReport(analyser)
 
 
 if __name__ == "__main__":

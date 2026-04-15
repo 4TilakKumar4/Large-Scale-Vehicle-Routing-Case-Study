@@ -15,6 +15,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 VAN_CAPACITY  = 3200
+ST_CAPACITY   = 1400
+ST_UNLOAD_RATE = 0.043  # min / cubic foot — lift-gate slower than van
 UNLOAD_RATE   = 0.03   # min / cubic foot
 MIN_TIME      = 30     # minutes
 DRIVING_SPEED = 40     # mph
@@ -339,3 +341,173 @@ def consolidateRoutes(allRoutes):
     while improved:
         allRoutes, improved = _tryEliminateOneRoute(allRoutes)
     return allRoutes
+
+
+def detailedRouteTrace(route, day, routeNum, locs=None):
+    """
+    Re-simulate a route and return per-stop timing rows matching Table 3 format.
+    Each row has: day, route_number, stop_sequence, order_id, location,
+    arrival_time, departure_time, delivery_volume_cuft.
+    Depot appears as the first and last row with no arrival/volume on dispatch
+    and no departure/volume on return.
+    locs is an optional DataFrame with ZIP→CITY mapping; if None the ZIP is used.
+    """
+    if not route:
+        return []
+
+    zipToCity = {}
+    if locs is not None:
+        zipToCity = dict(zip(locs["ZIP"].astype(int), locs["CITY"]))
+
+    def cityName(z):
+        return zipToCity.get(int(z), str(int(z)))
+
+    firstZip     = route[0]["TOZIP"]
+    firstDrive   = getDistance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
+    dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
+
+    rows = []
+
+    # Opening depot row
+    rows.append({
+        "day":                    day,
+        "route_number":           routeNum,
+        "stop_sequence":          0,
+        "order_id":               0,
+        "location":               "DC (Wilmington)",
+        "arrival_time":           None,
+        "departure_time":         toClock(dispatchTime),
+        "delivery_volume_cuft":   None,
+    })
+
+    currentZip  = DEPOT_ZIP
+    currentTime = dispatchTime
+    seq         = 1
+
+    for stop in route:
+        stopZip      = stop["TOZIP"]
+        cube         = stop["CUBE"]
+
+        milesLeg     = getDistance(currentZip, stopZip)
+        drive        = milesLeg / DRIVING_SPEED
+        arrival      = currentTime + drive
+        serviceStart = max(arrival, WINDOW_OPEN)
+        unload       = getUnloadTime(cube)
+        departure    = serviceStart + unload
+
+        rows.append({
+            "day":                    day,
+            "route_number":           routeNum,
+            "stop_sequence":          seq,
+            "order_id":               int(stop["ORDERID"]),
+            "location":               cityName(stopZip),
+            "arrival_time":           toClock(arrival),
+            "departure_time":         toClock(departure),
+            "delivery_volume_cuft":   int(cube),
+        })
+
+        currentTime = departure
+        currentZip  = stopZip
+        seq        += 1
+
+    # Closing depot row
+    milesBack  = getDistance(currentZip, DEPOT_ZIP)
+    driveBack  = milesBack / DRIVING_SPEED
+    returnTime = currentTime + driveBack
+
+    rows.append({
+        "day":                    day,
+        "route_number":           routeNum,
+        "stop_sequence":          seq,
+        "order_id":               0,
+        "location":               "DC (Wilmington)",
+        "arrival_time":           toClock(returnTime),
+        "departure_time":         None,
+        "delivery_volume_cuft":   None,
+    })
+
+    return rows
+
+
+def getUnloadTimeMixed(cube, vehicleType):
+    """Unload time in hours for the given vehicle type."""
+    rate = ST_UNLOAD_RATE if vehicleType == "st" else UNLOAD_RATE
+    return max(MIN_TIME, rate * cube) / 60.0
+
+
+def evaluateMixedRoute(routeList, vehicleType, verbose=False):
+    """
+    Evaluate a route for a specific vehicle type — van or st.
+    Identical to evaluateRoute() but uses vehicle-specific capacity and unload rate.
+    vehicleType must be "van" or "st".
+    """
+    if not routeList:
+        raise ValueError("evaluateMixedRoute() received an empty route list.")
+
+    capacity = VAN_CAPACITY if vehicleType == "van" else ST_CAPACITY
+
+    firstZip     = routeList[0]["TOZIP"]
+    firstDrive   = getDistance(DEPOT_ZIP, firstZip) / DRIVING_SPEED
+    dispatchTime = max(0.0, WINDOW_OPEN - firstDrive)
+
+    currentZip  = DEPOT_ZIP
+    currentTime = dispatchTime
+
+    totalMiles     = 0
+    totalDrive     = 0
+    totalUnload    = 0
+    totalWait      = 0
+    totalCube      = 0
+    windowFeasible = True
+
+    for stop in routeList:
+        stopZip      = stop["TOZIP"]
+        cube         = stop["CUBE"]
+
+        milesLeg     = getDistance(currentZip, stopZip)
+        drive        = milesLeg / DRIVING_SPEED
+        arrival      = currentTime + drive
+        serviceStart = max(arrival, WINDOW_OPEN)
+        wait         = max(0.0, WINDOW_OPEN - arrival)
+        unload       = getUnloadTimeMixed(cube, vehicleType)
+        departure    = serviceStart + unload
+
+        timeOfDay    = serviceStart % 24
+        endOfService = departure % 24
+        beforeClose  = (WINDOW_OPEN <= timeOfDay <= WINDOW_CLOSE) and (endOfService <= WINDOW_CLOSE)
+        windowFeasible = windowFeasible and beforeClose
+
+        totalMiles  += milesLeg
+        totalDrive  += drive
+        totalWait   += wait
+        totalUnload += unload
+        totalCube   += cube
+
+        currentTime = departure
+        currentZip  = stopZip
+
+    milesBack  = getDistance(currentZip, DEPOT_ZIP)
+    driveBack  = milesBack / DRIVING_SPEED
+    returnTime = currentTime + driveBack
+
+    totalMiles += milesBack
+    totalDrive += driveBack
+    totalDuty   = totalDrive + totalUnload + totalWait
+
+    capacityFeasible = totalCube  <= capacity
+    dotFeasible      = totalDrive <= MAX_DRIVING and totalDuty <= MAX_DUTY
+    overallFeasible  = capacityFeasible and windowFeasible and dotFeasible
+
+    return {
+        "total_miles":       int(totalMiles),
+        "total_drive":       round(float(totalDrive),  3),
+        "total_unload":      round(float(totalUnload), 3),
+        "total_wait":        round(float(totalWait),   3),
+        "total_duty":        round(float(totalDuty),   3),
+        "total_cube":        int(totalCube),
+        "return_time":       round(float(returnTime),  3),
+        "capacity_feasible": bool(capacityFeasible),
+        "window_feasible":   bool(windowFeasible),
+        "dot_feasible":      bool(dotFeasible),
+        "overall_feasible":  bool(overallFeasible),
+    }
