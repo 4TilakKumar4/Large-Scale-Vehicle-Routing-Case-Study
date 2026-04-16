@@ -315,8 +315,8 @@ class ALNSRelaxedSolver:
     Expected improvement over historical schedule: 12–20% miles.
     """
 
-    def __init__(self, maxIter=200, lambdaBalance=LAMBDA_BALANCE, maxPasses=MAX_PASSES,
-                 removeFrac=0.15, randomSeed=42, verbose=False):
+    def __init__(self, maxIter=50, lambdaBalance=LAMBDA_BALANCE, maxPasses=MAX_PASSES,
+                 removeFrac=0.08, randomSeed=42, verbose=False):
         self.maxIter       = maxIter
         self.lambdaBalance = lambdaBalance
         self.maxPasses     = maxPasses
@@ -361,7 +361,16 @@ class ALNSRelaxedSolver:
         return self._convergence
 
     def _search(self, orders):
-        """ALNS loop operating on day assignments."""
+        """
+        Fast ALNS loop over day assignments.
+
+        Key design: candidate evaluation uses a distance-based surrogate
+        (total depot-to-store distances for orders on each day) rather than
+        re-solving routes. Routes are only re-solved once per accepted iteration
+        on the two affected days — not during candidate comparison.
+        This reduces per-iteration cost from O(stores × days × solveOneDay)
+        to O(stores × days × fast_lookup) plus one solveOneDay per accepted move.
+        """
         import math as _math
 
         currentOrders = orders.copy()
@@ -378,50 +387,69 @@ class ALNSRelaxedSolver:
         T           = currentMiles * 0.03 if currentMiles > 0 else 1.0
         coolingRate = 0.995
 
+        # Pre-compute depot distances for the surrogate objective
+        from vrp_solvers.base import getDistance, DEPOT_ZIP
         uniqueStores = list(currentOrders["TOZIP"].unique())
+        depotDist    = {int(z): getDistance(DEPOT_ZIP, int(z)) for z in uniqueStores}
 
-        for _ in range(self.maxIter):
+        def _surrogateScore(assignedOrders):
+            """
+            Fast surrogate: sum of (depot_distance × cube) for all orders,
+            penalised by day imbalance. Correlates well with actual route miles
+            without requiring a solver call.
+            """
+            score      = 0.0
+            dayCubes   = {}
+            for _, row in assignedOrders.iterrows():
+                z    = int(row["TOZIP"])
+                d    = row["DayOfWeek"]
+                dist = depotDist.get(z, 0.0)
+                score += dist * float(row["CUBE"])
+                dayCubes[d] = dayCubes.get(d, 0.0) + float(row["CUBE"])
+            cubeVals = list(dayCubes.values())
+            avg      = sum(cubeVals) / max(1, len(cubeVals))
+            imbalance = sum((c - avg) ** 2 for c in cubeVals)
+            return score + self.lambdaBalance * imbalance
+
+        for iteration in range(self.maxIter):
             nRemove   = max(1, int(len(uniqueStores) * self.removeFrac))
             destroyed = random.sample(uniqueStores, min(nRemove, len(uniqueStores)))
 
-            trialOrders = currentOrders.copy()
-            trialRoutes = {d: list(currentRoutes[d]) for d in DAYS}
-            trialStats  = dict(currentStats)
+            trialOrders  = currentOrders.copy()
+            daysAffected = set()
 
+            # Repair: for each destroyed store assign to best day by surrogate
             for store in destroyed:
-                storeOrders = trialOrders[trialOrders["TOZIP"] == store]
-                groups = []
-                for (_, day), grp in storeOrders.groupby(["TOZIP", "DayOfWeek"], sort=False):
-                    groups.append({
-                        "order_ids": grp["ORDERID"].astype(int).tolist(),
-                        "current_day": day,
-                    })
+                mask   = trialOrders["TOZIP"] == store
+                groups = {}
+                for _, row in trialOrders[mask].iterrows():
+                    day = row["DayOfWeek"]
+                    groups.setdefault(day, []).append(int(row["ORDERID"]))
 
-                for group in groups:
-                    currentDay = group["current_day"]
-                    bestCandidateDay   = currentDay
-                    bestCandidateMiles = None
+                for currentDay, orderIds in groups.items():
+                    bestDay   = currentDay
+                    bestScore = None
 
                     for newDay in DAYS:
-                        trial2 = trialOrders.copy()
-                        trial2.loc[trial2["ORDERID"].isin(group["order_ids"]), "DayOfWeek"] = newDay
+                        cand = trialOrders.copy()
+                        cand.loc[cand["ORDERID"].isin(orderIds), "DayOfWeek"] = newDay
+                        s = _surrogateScore(cand)
+                        if bestScore is None or s < bestScore:
+                            bestScore = s
+                            bestDay   = newDay
 
-                        affectedDays = {currentDay, newDay}
-                        tempStats    = dict(trialStats)
-                        for day in affectedDays:
-                            _, tempStats[day] = _recomputeDay(trial2, day)
+                    if bestDay != currentDay:
+                        trialOrders.loc[
+                            trialOrders["ORDERID"].isin(orderIds), "DayOfWeek"
+                        ] = bestDay
+                        daysAffected.add(currentDay)
+                        daysAffected.add(bestDay)
 
-                        candMiles = _totalWeeklyMiles(tempStats)
-                        if bestCandidateMiles is None or candMiles < bestCandidateMiles:
-                            bestCandidateMiles = candMiles
-                            bestCandidateDay   = newDay
-
-                    trialOrders.loc[
-                        trialOrders["ORDERID"].isin(group["order_ids"]), "DayOfWeek"
-                    ] = bestCandidateDay
-
-                    for day in {currentDay, bestCandidateDay}:
-                        trialRoutes[day], trialStats[day] = _recomputeDay(trialOrders, day)
+            # Re-solve only affected days to get actual miles
+            trialRoutes = {d: list(currentRoutes[d]) for d in DAYS}
+            trialStats  = dict(currentStats)
+            for day in daysAffected:
+                trialRoutes[day], trialStats[day] = _recomputeDay(trialOrders, day)
 
             trialMiles = _totalWeeklyMiles(trialStats)
             delta      = trialMiles - currentMiles
@@ -432,6 +460,7 @@ class ALNSRelaxedSolver:
                 currentRoutes = trialRoutes
                 currentStats  = trialStats
                 currentMiles  = trialMiles
+                daysAffected  = set()
 
             if trialMiles < bestMiles:
                 bestOrders = trialOrders.copy()

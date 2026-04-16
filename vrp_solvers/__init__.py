@@ -23,11 +23,11 @@ from vrp_solvers.alns               import ALNSSolver
 from vrp_solvers.resourceAnalyser   import ResourceAnalyser
 from vrp_solvers.costModel          import CostModel, SENSITIVITY_RANGES
 from vrp_solvers.relaxedScheduleSolver import (
-    RelaxedScheduleSolver,
     SweepRelaxedSolver,
     ALNSRelaxedSolver,
     getVisitGroups,
 )
+
 from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
 from vrp_solvers.overnightSolver    import (
     OvernightSolver,

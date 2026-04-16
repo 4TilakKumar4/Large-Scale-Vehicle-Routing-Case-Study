@@ -1,464 +1,274 @@
-# Methodology
+# Results
 ### IE 7200 — Supply Chain Engineering | NHG Vehicle Routing Case Study
 
-## 1. Problem Formulation
-
-### 1.1 Problem Classification
-
-The NHG routing problem is classified as a **Capacitated Vehicle Routing Problem with Time Windows and HOS Constraints (CVRPTW-HOS)**. It combines elements of three canonical VRP variants:
-
-- **CVRP** — vehicles have a fixed volume capacity
-- **VRPTW** — each customer must be served within a time window
-- **PVRP** — deliveries follow a fixed weekly repeating schedule
-
-The problem is solved independently for each weekday. Orders assigned to Monday are routed on Monday routes only; cross-day mixing is not permitted in the base case (see Section 6 for the overnight extension).
-
-### 1.2 Formal Definition
-
-**Sets:**
-- $N$ — set of store orders (delivery stops)
-- $K$ — set of available vehicles (homogeneous fleet of vans in Sub-problem 1; mixed fleet in Sub-problem 2)
-- Depot located at ZIP code 01887 (Wilmington, MA)
-
-**Parameters:**
-
-| Symbol | Value | Description |
-|---|---|---|
-| $Q_V$ | 3,200 ft³ | Van capacity |
-| $Q_{ST}$ | 1,400 ft³ | Straight Truck capacity (Sub-problem 2) |
-| $r_V$ | 0.03 min/ft³ | Van unload rate |
-| $r_{ST}$ | 0.043 min/ft³ | Straight Truck unload rate |
-| $t_{min}$ | 30 min | Minimum unload time per stop |
-| $v$ | 40 mph | Driving speed |
-| $[e, l]$ | [08:00, 18:00] | Delivery time window |
-| $H_d$ | 11 hours | Maximum driving per shift |
-| $H_o$ | 14 hours | Maximum on-duty per shift |
-| $H_b$ | 10 hours | Mandatory break duration |
-
-**Decision variables:** Route assignment and stop sequencing for each vehicle on each day.
-
-**Objective:** Minimise total weekly route miles.
-
-### 1.3 Feasibility Constraints
-
-A route is feasible if and only if all three of the following hold simultaneously:
-
-**Capacity:** $\sum_{i \in \text{route}} \text{cube}_i \leq Q$ (where $Q = Q_V$ or $Q_{ST}$ depending on vehicle type)
-
-**Time windows:** Every stop $i$ must begin and complete service within $[08:00, 18:00]$. Service start time is $\max(\text{arrival}_i, 08:00)$; service completes at start time plus unload time. The window check applies to service completion, not just arrival.
-
-**DOT HOS:** Total driving $\leq H_d$ and total on-duty time $\leq H_o$, where on-duty includes driving, unloading, and waiting time. Loading at the DC does not count toward on-duty hours.
-
-### 1.4 Dispatch Logic
-
-Vehicles are dispatched at the time required to arrive at the first stop exactly at 08:00:
-
-$$t_{\text{dispatch}} = \max\left(0, 08:00 - \frac{d(\text{depot}, \text{first stop})}{v}\right)$$
-
-The floor of zero prevents dispatch before midnight. On-duty time begins accumulating from dispatch.
-
-### 1.5 Unload Time
-
-$$t_{\text{unload}}(q) = \frac{\max(t_{\min},\ r \cdot q)}{60} \text{ hours}$$
-
-## 2. Route Evaluation
-
-All route evaluation is centralised in `vrp_solvers/base.py::evaluateRoute()` for Van routes and `evaluateMixedRoute()` for fleet-typed evaluation. These functions are called millions of times during construction and improvement and are the computational bottleneck of every solver. Each simulates the full route from dispatch to depot return and returns:
-
-- Total miles, drive time, unload time, wait time, duty time
-- Cube loaded
-- Return time
-- Three individual feasibility flags (capacity, window, DOT) and an overall feasibility flag
-
-Both functions are intentionally stateless — they take a route list and return a dict.
-
-## 3. Construction Heuristics
-
-Construction heuristics build a complete feasible solution from scratch. They are fast, deterministic, and provide the starting point for all improvement methods.
-
-### 3.1 Clarke-Wright Savings Algorithm
-
-**Source:** Clarke and Wright (1964). Implemented in `vrp_solvers/clarkeWright.py`.
-
-The algorithm starts with the most wasteful possible plan — a separate depot-to-store-to-depot round trip for every order — and iteratively merges pairs of routes using the savings criterion:
-
-$$s(i, j) = d(\text{depot}, i) + d(\text{depot}, j) - d(i, j)$$
-
-This measures how many miles are saved by visiting $i$ and $j$ on the same route rather than two separate ones. All $\binom{n}{2}$ pairs are computed and sorted descending. Merges are accepted in order when the merged route passes all three feasibility constraints and both orders are at valid endpoints of their current routes.
-
-Four merge orientations are attempted at each candidate pair to handle both forward and reversed adjacency.
-
-**Complexity:** $O(n^2 \log n)$ for savings computation.
-
-**Route consolidation:** After CW construction, a post-processing phase attempts to eliminate the route with the smallest cube by relocating each of its stops to the cheapest feasible position in any remaining route. This is repeated until no further elimination is possible, directly reducing vehicle count.
-
-### 3.2 Nearest Neighbor Heuristic
-
-**Source:** Classical VRP literature. Implemented in `vrp_solvers/nearestNeighbor.py`.
-
-Starting from the depot, the algorithm repeatedly appends the closest unvisited store whose addition keeps the current route feasible. When no feasible extension exists, the current route is closed and a new one is opened from the depot. $O(n^2)$ per day.
-
-## 4. Local Search Improvement
-
-### 4.1 2-opt
-
-**Source:** Lin (1965). Implemented in `vrp_solvers/base.py::twoOptRoute()`.
-
-For every pair of edges $(i, i+1)$ and $(j, j+1)$ in a route, 2-opt considers reversing the segment between them. If the reversal is feasible and reduces total route miles, it is accepted. Repeats until 2-optimal. Applied to routes with 4 or more stops.
-
-### 4.2 Or-opt
-
-**Source:** Or (1976). Implemented in `vrp_solvers/base.py::orOptRoute()`.
-
-Or-opt tries relocating chains of 1, 2, or 3 consecutive stops to every other position within the same route. A relocation is accepted if it is feasible and reduces total miles. Applied to routes with 2 or more stops.
-
-### 4.3 Note on 3-opt
-
-3-opt removes three edges and reconnects the resulting segments in one of seven possible configurations, exploring a richer neighbourhood than 2-opt at $O(n^3)$ per pass. For the NHG instance sizes (up to 63 orders on Thursday), this amounts to approximately 250,000 edge triplets per iteration across multiple passes — significantly slower than the combined 2-opt + Or-opt pipeline with little practical gain. Bräysy and Gendreau (2005) demonstrate that Or-opt, by relocating chains of one to three consecutive stops, captures the most valuable subset of 3-opt improving moves at a fraction of the computational cost. The 2-opt + Or-opt pipeline used here therefore approximates 3-opt quality without the cubic runtime penalty.
-
-### 4.4 Combined local search pipeline
-
-```
-twoOptRoute()  →  orOptRoute()
-```
-
-Applied in `vrp_solvers/base.py::applyLocalSearch()`.
-
-## 5. Metaheuristics
-
-All three metaheuristics seed from the CW + consolidation + 2-opt + Or-opt solution.
-
-### 5.1 Tabu Search
-
-**Source:** Glover (1986); Gendreau, Hertz, and Laporte (1994). Implemented in `vrp_solvers/tabuSearch.py`.
-
-Considers relocate and swap inter-route moves. The best non-tabu feasible move is accepted at each iteration — even if it worsens the current solution. A tabu list keyed by `(move_type, source_route_idx, source_position)` prevents cycling. The aspiration criterion overrides the tabu list when a move produces a new global best.
-
-| Parameter | Default |
-|---|---|
-| `maxIter` | 300 |
-| `tabuTenure` | 15 |
-
-### 5.2 Simulated Annealing
-
-**Source:** Kirkpatrick, Gelatt, and Vecchi (1983); Osman (1993). Implemented in `vrp_solvers/simulatedAnnealing.py`.
-
-Proposes a single random stop relocation per iteration. Acceptance follows the Metropolis criterion: improving moves always accepted; worsening moves accepted with probability $\exp(-\Delta/T)$. Temperature decays geometrically from $T_0$ to $T_{\text{end}}$.
-
-| Parameter | Default |
-|---|---|
-| `maxIter` | 2000 |
-| `tempStart` | 500.0 |
-| `tempEnd` | 1.0 |
-
-### 5.3 Adaptive Large Neighborhood Search
-
-**Source:** Shaw (1998) for LNS; Ropke and Pisinger (2006) for ALNS. Implemented in `vrp_solvers/alns.py`.
-
-At each iteration a destroy operator removes ~20% of stops and a repair operator reinserts them. Destroy operators: random removal, worst removal, Shaw removal, route removal. Repair operators: greedy insertion, regret-2 insertion. Operator weights are updated every 50 iterations using performance scores (9 for new global best, 5 for improvement, 2 for accepted worse move). Selection uses roulette-wheel sampling.
-
-| Parameter | Default |
-|---|---|
-| `maxIter` | 500 |
-| `removeFrac` | 0.2 |
-
-## 6. Overnight Route Extension
-
-**Implemented in:** `vrp_solvers/overnightSolver.py`
-
-The overnight extension allows a driver to travel toward the next day's first delivery stop after completing day-1 deliveries, take the mandatory 10-hour DOT break en route, and resume on day 2. This can reduce total miles when adjacent-day routes serve geographically proximate stores.
-
-**Break placement — latest break rule:** After completing all day-1 deliveries, the driver travels toward the day-2 first stop until their HOS limit is reached, then takes the break. If the driver reaches the day-2 stop before HOS runs out, the break begins on arrival. In both cases, day-2 HOS resets to zero when the break ends.
-
-**Pairing algorithm:** For every pair of adjacent-day routes $(r_1, r_2)$, the overnight combination is evaluated. If feasible and shorter than the two separate routes, it is recorded as a candidate. Candidates are sorted by savings and applied greedily — each route participates in at most one pairing.
-
-Overnight routes span exactly two consecutive calendar days. Adjacent pairs only: Mon-Tue, Tue-Wed, Wed-Thu, Thu-Fri.
-
-### 6.6 Business framing — cost vs savings
-
-Overnight routing reduces mileage but introduces two costs absent from day-cab operations: the IRS per diem allowance ($80/overnight) and the sleeper cab equipment premium ($60/day above a day-cab). The net annual saving or cost is computed by `CostModel.overnightSummary()` as:
-
-$$\text{Net saving} = (\text{miles saved/week} \times \text{cost per mile} \times 52) - (\text{per diem annual} + \text{sleeper premium annual})$$
-
-A positive result means overnight routing is economically justified. A negative result means the per diem and sleeper costs outweigh the mileage reduction — a realistic outcome when overnight routes save only a small number of miles per pairing.
-
-## 7. Mixed Fleet — Sub-problem 2
-
-**Implemented in:** `vrp_solvers/mixedFleetSolver.py`
-
-Sub-problem 2 introduces a heterogeneous fleet of Vans (3,200 ft³, unload rate 0.030 min/ft³) and Straight Trucks (1,400 ft³, unload rate 0.043 min/ft³).
-
-### 7.1 Fleet assignment rules
-
-Each order falls into exactly one category:
-
-| Category | Condition | Assignment |
-|---|---|---|
-| ST-required | `straight_truck_required == "yes"` | Straight Truck only |
-| Too large for ST | `cube > ST_CAPACITY` | Van only |
-| Flexible | All other orders | Either fleet |
-
-### 7.2 Algorithm
-
-The MixedFleetSolver runs a unified Clarke-Wright savings across all orders for the day, building a combined initial solution. After construction, fleet assignment is finalised: ST-required orders are moved to ST routes, over-capacity orders are confirmed on Van routes, and flexible orders are assigned to whichever fleet minimises total miles. A cross-fleet Or-opt improvement phase then relocates stops between Van and ST routes wherever it reduces miles without violating fleet assignment rules.
-
-### 7.3 Route evaluation
-
-Van and ST routes are evaluated by `evaluateMixedRoute(route, vehicleType)` which uses the appropriate capacity and unload rate for the specified fleet type.
-
-### 7.4 ALNS Mixed Fleet Solver
-
-`ALNSMixedFleetSolver` extends the mixed fleet approach by replacing the CW + local search improvement phase with ALNS operating over a **unified tagged route list**. Each route is represented as a dict `{"type": "van"|"st", "stops": [...]}`. This lets the ALNS destroy/repair loop move flexible stops between fleets — the key improvement over the CW-based solver, which assigns fleet types during construction and only repositions flexible stops via a post-processing cross-fleet pass.
-
-**Seed:** `MixedFleetSolver` (CW + local search + cross-fleet improvement) provides the initial solution. ALNS then refines it.
-
-**Destroy operators:** The same four operators as the base `ALNSSolver` (random, worst, Shaw, route removal), applied to the unified tagged route list. Removed stops carry their fleet constraint category implicitly.
-
-**Repair operators (fleet-aware):** Each removed stop is classified before reinsertion:
-
-| Category | Reinsertion rule |
-|---|---|
-| ST-required | Try ST routes only; open new ST route if no feasible position exists |
-| Too large for ST | Try Van routes only; open new Van route if no feasible position exists |
-| Flexible | Try all routes of both fleet types; insert at cheapest feasible position |
-
-The flexible stop rule is the mechanism that enables genuine cross-fleet reallocation at each iteration — a stop that was on a Van in the seed may migrate to an ST route if the repair operator finds a cheaper feasible position there. This is not possible in `MixedFleetSolver` where fleet assignment is finalised during construction.
-
-**Parameters:** `maxIter=500`, `removeFrac=0.2`, `randomSeed=42` — matching the base `ALNSSolver` for fair comparison.
-
-## 8. Resource Analysis
-
-**Implemented in:** `vrp_solvers/resourceAnalyser.py`
-
-### 8.1 Truck requirements
-
-One truck is required per simultaneous route. The weekly fleet requirement equals the maximum daily route count across all five weekdays.
-
-### 8.2 Driver requirements — minimum path cover
-
-The minimum driver count is solved as a minimum path cover on a directed acyclic graph. Nodes are (day, route_index) pairs. A directed edge from route $A$ on day $N$ to route $B$ on day $N+1$ exists when the driver finishing $A$ satisfies the 10-hour break requirement:
-
-$$t_{\text{return}}(A) + 10 \leq t_{\text{dispatch}}(B) + 24$$
-
-By König's theorem:
-
-$$\text{min drivers} = \text{total routes} - \text{max bipartite matching}$$
-
-Overnight pairings are pre-committed chains removed from the matching problem before solving, then added back as single driver assignments.
-
-### 8.3 Driver workload sustainability
-
-Beyond the minimum headcount, the `ResourceAnalyser` computes two workload metrics across all driver chains:
-
-- **`avg_weekly_duty_hrs`** — average total on-duty hours per driver across their assigned routes for the week. A sustainable value for dedicated regional drivers is typically 40–55 hours/week.
-- **`max_weekly_duty_hrs`** — the highest weekly duty load assigned to any single driver. If this approaches or exceeds 65–70 hours, the solution may minimise headcount at the expense of driver retention and turnover risk, which is a direct concern for NHG given their stated interest in operational stability.
-
-The driver chains output (`outputs/*/driver_chains.csv`) lists each driver's full weekly assignment and per-day average duty hours, enabling NHG to evaluate whether the solution produces a sustainable and equitable work schedule.
-
-### 8.4 DOT 70-hour/8-day rule
-
-The DOT 70-hour rule is not modelled. The dataset represents a single average week; inter-week driver continuity is outside the project scope.
-
-## 9. Cost Model
-
-**Implemented in:** `vrp_solvers/costModel.py`
-
-All default rates are sourced from 2024-25 industry benchmarks for Northeast US dedicated contract carriers.
-
-### 9.1 Cost components
-
-| Component | Basis | Default rate | Source |
+## 1. Algorithm Comparison — Total Weekly Miles
+
+| Algorithm | Weekly Miles | Annual Miles | Routes | Min Drivers | Peak Trucks | Weekly Cost | Annual Cost | Runtime (s) |
+|---|---|---|---|---|---|---|---|---|
+| CW Only | 7,940 | 412,880 | 32 | 7 | 7 | $29,403 | $1,528,932 | 1.0 |
+| NN Only | 9,758 | 507,416 | 32 | 10 | 7 | $33,336 | $1,733,473 | 1.5 |
+| CW + 2-opt/Or-opt | 7,904 | 411,008 | 32 | 7 | 7 | $29,320 | $1,524,655 | 2.0 |
+| NN + 2-opt/Or-opt | 9,539 | 496,028 | 32 | 10 | 7 | $32,837 | $1,707,531 | 2.3 |
+| Tabu Search | 7,893 | 410,436 | 32 | 7 | 7 | $29,293 | $1,523,215 | 143.5 |
+| Simulated Annealing | 7,904 | 411,008 | 32 | 7 | 7 | $29,320 | $1,524,655 | 7.8 |
+| ALNS | 7,844 | 407,888 | 31 | 7 | 7 | $29,110 | $1,513,727 | 417.8 |
+| CW + Overnight | 7,780 | 404,560 | 26 | 11 | 7 | $31,167 | $1,620,695 | — |
+| ALNS + Overnight | 7,610 | 395,720 | 27 | 12 | 7 | $29,991 | $1,559,540 | — |
+| Mixed Fleet (Van+ST) | 8,376 | 435,552 | 39 | 10 | 9 | $32,383 | $1,683,939 | 1.6 |
+| Relaxed (Sweep+LS) | 5,328 | 277,056 | 27 | 7 | 7 | $23,245 | $1,208,759 | 651.9 |
+| Relaxed (ALNS+LS) | 7,476 | 388,752 | 30 | 6 | 6 | $28,010 | $1,456,532 | 146.3 |
+
+> Source: `outputs/comparison/comparison_summary.csv`, `outputs/relaxed_schedule/results_summary.csv`
+
+### 1.1 Improvement over baselines
+
+| Algorithm | vs CW Only (miles) | vs CW + LS (miles) | vs CW Only (annual cost) |
 |---|---|---|---|
-| Mileage | Per mile driven | $0.725/mi (Van), $0.820/mi (ST) | ATRI 2025 operational costs report (2024 data) |
-| Driver wages | Per on-duty hour; 1.5× above 8h | $32.00/hr base | BLS + Massachusetts ZipRecruiter 2024-25 |
-| Benefits | Fraction of gross wages | 30% loading | ATRI benefits/wages ratio 24.7% + NE premium |
-| Equipment | Per vehicle dispatched per day | $185/day (day-cab), +$60 sleeper, +$25 ST trailer | ATRI $0.39/mi + MA rental market data |
-| Insurance | Per vehicle per operating day | $56/day | NE interstate fleet $15K/yr ÷ 268 operating days |
-| Per diem | Per overnight pairing | $80/overnight | IRS Notice 2024-68, effective October 1 2024 |
+| CW + 2-opt/Or-opt | −0.5% | baseline | −0.3% |
+| Tabu Search | −0.6% | −0.1% | −0.4% |
+| Simulated Annealing | −0.5% | 0.0% | −0.3% |
+| ALNS | −1.2% | −0.8% | −1.0% |
+| CW + Overnight | −2.0% | −1.6% | +6.0% |
+| ALNS + Overnight | −4.2% | −3.7% | +2.0% |
+| Mixed Fleet | +5.5% | +6.0% | +10.1% |
+| Relaxed (Sweep+LS) | **−32.9%** | **−32.6%** | **−20.9%** |
+| Relaxed (ALNS+LS) | −5.8% | −5.4% | −4.7% |
 
-Mileage cost covers fuel, repair and maintenance, and tyres. Equipment cost covers tractor and trailer lease/depreciation. Insurance covers $1M CSL liability, cargo, and physical damage as required for NE interstate operations. Per diem covers meals and incidental expenses for drivers on overnight routes.
+### 1.2 Interpreting the comparison
 
-### 9.2 Usage
+**Does local search pay off over pure construction?** CW + 2-opt/Or-opt reduces weekly miles by 0.5% (36 miles) over CW Only with a runtime under 2 seconds per run. The improvement is modest because CW's consolidation phase already produces near-tight routes for this instance scale.
 
-```python
-cm      = CostModel()                        # default 2024-25 NE rates
-bd      = cm.weeklyBreakdown(routesByDay)    # per-route and weekly totals
-annual  = cm.annualCost(bd["weekly"]["total"])
-cm.printSummary(bd, label="Base Case")
-```
+**Do metaheuristics justify their runtime?** ALNS achieves the best day-cab mileage at 7,844 miles — 0.8% below CW + LS. Tabu Search is close (7,893, 0.1% better than CW+LS) but takes 70× longer. Simulated Annealing produces results identical to CW + LS despite 4× the runtime. The marginal improvement from metaheuristics over local search is small, suggesting CW + 2-opt/Or-opt already finds a near-locally-optimal solution for this instance.
 
-Custom rates can be passed at construction time:
+**What drives the winning configuration?** ALNS's advantage over CW+LS comes primarily from Tuesday — ALNS consolidates Tuesday from 7 routes to 6 (1,894 vs 1,943 miles), saving 49 of its 60 total weekly miles advantage. The route removal destroy operator is the mechanism: it eliminates the smallest route entirely and redistributes its stops, achieving vehicle count reduction that 2-opt and Or-opt cannot. The binding constraint ALNS is exploiting is **route count on the heaviest day**, not geographic sequencing.
 
-```python
-cm = CostModel(driver_hourly_wage=35.00, cost_per_mile_van=0.80)
-```
+**Overnight routes cost more than they save.** Despite reducing weekly miles, overnight routing increases annual cost due to per diem ($80/overnight) and sleeper cab premium ($60/day) charges. CW + Overnight saves 124 miles/week but costs **$96,041/year more** than CW + LS. ALNS + Overnight saves 234 miles/week but costs **$45,813/year more** than ALNS alone. For NHG, overnight routing is not economically justified at current benchmark rates.
 
-This allows NHG to substitute MAD's actual quoted rates and immediately compare against the internal estimate.
+**The relaxed schedule is the dominant lever.** The angular sweep seed + greedy local search reduces weekly miles from 7,904 to 5,328 — a **32.6% improvement** — and reduces annual cost by $315,896. This is more than ten times the improvement of the best day-cab metaheuristic. The historical schedule's arbitrary day assignments were causing significant geographic inefficiency that no amount of within-day routing optimisation could correct.
 
-### 9.3 Cost model as a post-processing layer
+## 2. Day-by-Day Breakdown
 
-The solvers in this project minimise total weekly miles as a proxy for cost. Miles and cost are highly correlated for routes of similar length, so this approximation is reasonable for comparing algorithm configurations. A cost-aware objective — minimising the full `CostModel` evaluation at each solver iteration — would be more precise but is computationally prohibitive given that cost evaluation involves per-route duty-hour accounting, overtime detection, and equipment classification. For this instance scale, the correlation between miles and cost is sufficiently tight that a miles-optimal solution is expected to be near cost-optimal. The `VRP_CostAnalysis.py` script verifies this post-hoc by applying the cost model to all ten algorithm configurations.
+### 2.1 Daily miles by algorithm (day-cab configs)
 
-## 10. Sensitivity Analysis
-
-### 10.1 Cost-rate sensitivity
-
-**Implemented in:** `VRP_CostAnalysis.py`
-
-Varies each of the six cost parameters (mileage rate, driver wage, overtime multiplier, overnight allowance, equipment daily cost, insurance daily cost) across a calibrated low-default-high range. Routes are not re-solved — only the cost calculation changes. Produces sensitivity curves for all five algorithm configurations simultaneously.
-
-### 10.2 Operational sensitivity
-
-**Implemented in:** `VRP_SensitivityAnalysis.py`
-
-Ten operational sensitivities across three groups. Routes are re-solved for each parameter value.
-
-**Group A — Demand:**
-
-| Sensitivity | Parameter range |
-|---|---|
-| Volume scaling | +10%, +20%, +30% on all order cubes |
-| Peak week | Wed + Thu orders scaled +25% |
-| ST mix shift | Current fraction → 30% → 50% ST-required orders |
-
-**Group B — Fleet and operational:**
-
-| Sensitivity | Parameter range |
-|---|---|
-| Van capacity | 2,400 / 3,200 / 3,600 ft³ |
-| ST capacity | 1,000 / 1,400 / 1,800 ft³ |
-| Driving speed | 32 / 40 / 48 mph (±20%) |
-| Unload rate | −20% / baseline / +20% (Van and ST simultaneously) |
-
-**Group C — DOT and schedule:**
-
-| Sensitivity | Parameter range |
-|---|---|
-| HOS safety buffer | 0h / 0.5h / 1h subtracted from MAX_DRIVING and MAX_DUTY |
-| Delivery window | [08:00, 18:00] / [06:00, 20:00] / [00:00, 24:00] |
-| Overnight toggle | No overnight vs overnight-allowed (cost delta) |
-
-### 10.3 ConstantOverride — safe parameter patching
-
-All Group B and C sensitivities require modifying the constants in `vrp_solvers/base.py` at runtime. This is done via the `ConstantOverride` context manager implemented in `VRP_SensitivityAnalysis.py`:
-
-```python
-with ConstantOverride(DRIVING_SPEED=32, MAX_DRIVING=10):
-    routes = solver.solve(dayOrders)
-# All constants guaranteed restored here, even if an exception occurred
-```
-
-The context manager patches module-level attributes directly on the `vrp_solvers.base` module object, which all solver functions read at call time. Source files are never modified. Restoration is guaranteed by a `finally` block — the original values are saved before any patch is applied and are always written back on exit regardless of whether the body succeeded or raised.
-
-## 11. Algorithm Comparison Matrix
-
-| Configuration | Construction | Local Search | Metaheuristic | Overnight | Fleet |
+| Day | CW Only | CW + LS | TS | SA | ALNS |
 |---|---|---|---|---|---|
-| `cw_only` | Clarke-Wright | — | — | — | Van |
-| `nn_only` | Nearest Neighbor | — | — | — | Van |
-| `cw_2opt_oropt` | Clarke-Wright | 2-opt + Or-opt | — | — | Van |
-| `nn_2opt_oropt` | Nearest Neighbor | 2-opt + Or-opt | — | — | Van |
-| `tabu_search` | CW | 2-opt + Or-opt (seed) | Tabu Search | — | Van |
-| `simulated_annealing` | CW | 2-opt + Or-opt (seed) | Simulated Annealing | — | Van |
-| `alns` | CW | 2-opt + Or-opt (seed) | ALNS | — | Van |
-| `cw_overnight` | CW | 2-opt + Or-opt | — | Yes | Van |
-| `alns_overnight` | CW | 2-opt + Or-opt (seed) | ALNS | Yes | Van |
-| `mixed_fleet` | CW | 2-opt + Or-opt | — | — | Van + ST |
-| `alns_mixed_fleet` | CW | 2-opt + Or-opt (seed) | ALNS | — | Van + ST |
+| Monday (43 orders) | 1,525 | 1,525 | 1,525 | 1,525 | 1,521 |
+| Tuesday (58 orders) | 1,951 | 1,943 | 1,943 | 1,943 | 1,894 |
+| Wednesday (50 orders) | 1,425 | 1,424 | 1,421 | 1,424 | 1,424 |
+| Thursday (63 orders) | 1,554 | 1,539 | 1,531 | 1,539 | 1,532 |
+| Friday (47 orders) | 1,485 | 1,473 | 1,473 | 1,473 | 1,473 |
 
-> **Note on 3-opt:** 3-opt is not included as a standalone configuration. Or-opt (Section 4.2) captures the most computationally valuable subset of 3-opt improving moves at $O(n^2)$ per pass rather than $O(n^3)$, making the 2-opt + Or-opt pipeline the preferred choice for this instance scale (Bräysy and Gendreau, 2005).
+### 2.2 Daily route count by algorithm
 
-## 12. Software Architecture
+| Day | CW Only | CW + LS | TS | SA | ALNS |
+|---|---|---|---|---|---|
+| Monday | 5 | 5 | 5 | 5 | 5 |
+| Tuesday | 7 | 7 | 7 | 7 | **6** |
+| Wednesday | 7 | 7 | 7 | 7 | 7 |
+| Thursday | 7 | 7 | 7 | 7 | 7 |
+| Friday | 6 | 6 | 6 | 6 | 6 |
 
-### 12.1 Package structure
+Tuesday's route count reduction from 7 to 6 explains ALNS's entire advantage over CW+LS. Wednesday and Friday are identical across all configurations — local search has already found the optimal for those days. Thursday shows modest improvement from LS (1,539 vs 1,554) but no further gains from metaheuristics. Monday is essentially unchanged across all methods.
 
-All solver logic lives in `vrp_solvers/`. Each algorithm class exposes a consistent interface:
+> Source: `outputs/comparison/per_day_detail.csv`
 
-```python
-solver = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
-routes = solver.solve(dayOrders)
-stats  = solver.getStats()
-curve  = solver.getConvergence()
-```
+## 3. Sub-problem 1b — Overnight Route Extension
 
-`MixedFleetSolver` exposes additional fleet-specific accessors:
+### 3.1 Miles impact
 
-```python
-solver = MixedFleetSolver()
-solver.solve(dayOrders)
-vanRoutes = solver.getVanRoutes()
-stRoutes  = solver.getStRoutes()
-stats     = solver.getStats()   # includes van_routes, st_routes, van_miles, st_miles
-```
+| Metric | CW + LS | CW + Overnight | ALNS | ALNS + Overnight |
+|---|---|---|---|---|
+| Total weekly miles | 7,904 | 7,780 | 7,844 | 7,610 |
+| Total annual miles | 411,008 | 404,560 | 407,888 | 395,720 |
+| Total routes | 32 | 26 | 31 | 27 |
+| Overnight pairs | — | 6 | — | 4 |
+| Min drivers | 7 | 11 | 7 | 12 |
 
-`OvernightSolver` wraps any base solver and operates on full weekly orders:
+### 3.2 Overnight cost-vs-savings analysis
 
-```python
-solver = OvernightSolver(ALNSSolver())
-routesByDay, overnightRoutes, usedRoutes = solver.solve(orders)
-```
+| Item | CW + Overnight | ALNS + Overnight |
+|---|---|---|
+| Weekly miles saved vs day-cab equivalent | 124 | 234 |
+| Annual miles saved | 6,448 | 12,168 |
+| Annual mileage saving (at $0.725/mi) | $4,675 | $8,822 |
+| Annual per diem cost ($80 × pairs × 52) | $24,960 | $16,640 |
+| Annual sleeper cab premium ($60 × 2 × pairs × 52) | $37,440 | $24,960 |
+| Total overnight cost (annual) | $62,400 | $41,600 |
+| **Net annual result** | **−$57,725 (net cost)** | **−$32,778 (net cost)** |
 
-`ResourceAnalyser` takes a `routesByDay` dict and optional overnight pairings:
+**Overnight routing is not economically justified under 2024–25 Northeast benchmark rates.** The per diem and sleeper cab premiums exceed the mileage savings by a factor of 13× (CW) and 5× (ALNS). NHG would need either significantly longer overnight routes (more miles saved per pairing) or substantially lower per diem rates to justify the operational complexity of sleeper-cab deployments.
 
-```python
-analyser = ResourceAnalyser(routesByDay, overnightPairings=overnightRoutes)
-analyser.analyse()
-report = analyser.getReport()
-```
+The increase in minimum drivers (7 → 11 for CW+Overnight, 7 → 12 for ALNS+Overnight) is also notable. Overnight pairings commit two consecutive days to the same driver, reducing scheduling flexibility and increasing the driver headcount required to cover the weekly schedule.
 
-`CostModel` is fully parameterised and works across all three sub-problems:
+### 3.3 Resource requirements — overnight scenario
 
-```python
-cm = CostModel()
-bd = cm.weeklyBreakdown(routesByDay)                                   # base case
-bd = cm.weeklyBreakdown(routesByDay, overnightPairings=pairings)       # overnight
-bd = cm.weeklyBreakdown(routesByDay=None, vanByDay=v, stByDay=st)      # mixed fleet
-```
+| Metric | CW + LS | CW + Overnight | ALNS | ALNS + Overnight |
+|---|---|---|---|---|
+| Minimum drivers | 7 | 11 | 7 | 12 |
+| Peak trucks (any day) | 7 | 7 | 7 | 7 |
+| Overnight pairs | 0 | 6 | 0 | 4 |
 
-### 12.2 Shared base module
+> Source: `outputs/comparison/comparison_summary.csv`
 
-`vrp_solvers/base.py` is the single source of truth for all constants, data loading, and shared computation. The distance matrix is stored as a module-level global (`DIST_MATRIX`) populated by `loadInputs()`. All constants are defined once and read by all solvers at call time — enabling the `ConstantOverride` pattern used in sensitivity analysis without modifying source files.
+## 4. Sub-problem 2 — Mixed Fleet (Van + Straight Truck)
 
-### 12.3 Data flow
+### 4.1 Fleet results
 
-```
-deliveries.xlsx  ──┐
-distances.xlsx   ──┴──► VRP_DataAnalysis.py ──► data/
-                                                   │
-                         ┌─────────────────────────┘
-                         ▼
-                    vrp_solvers/base.py (loadInputs)
-                         │
-          ┌──────────────┼────────────────────────────┐
-          ▼              ▼                            ▼
-   VRP_BaseCase    VRP_MixedFleet            VRP_SolverComparison
-   VRP_OvernightRoutes                               │
-                                         ┌───────────┴───────────┐
-                                         ▼                       ▼
-                                VRP_CostAnalysis    VRP_SensitivityAnalysis
-                                         │                       │
-                                         ▼                       ▼
-                                 outputs/cost_analysis/   outputs/sensitivity/
-```
+| Metric | Base Case (CW+LS) | Mixed Fleet |
+|---|---|---|
+| Total weekly miles | 7,904 | 8,376 |
+| Total annual miles | 411,008 | 435,552 |
+| Total routes | 32 | 39 |
+| Min drivers | 7 | 10 |
+| Peak trucks (any day) | 7 | 9 |
+| Weekly cost | $29,320 | $32,383 |
+| Annual cost | $1,524,655 | $1,683,939 |
 
-## 13. References
+### 4.2 Cost comparison vs base case
 
-1. Clarke, G. and Wright, J.W. (1964). Scheduling of Vehicles from a Central Depot to a Number of Delivery Points. *Operations Research*, 12(4), 568–581.
+| Metric | Base Case | Mixed Fleet | Difference |
+|---|---|---|---|
+| Weekly miles | 7,904 | 8,376 | +472 (+6.0%) |
+| Annual miles | 411,008 | 435,552 | +24,544 |
+| Weekly cost | $29,320 | $32,383 | +$3,063 |
+| Annual cost | $1,524,655 | $1,683,939 | **+$159,284** |
 
-2. Gendreau, M., Hertz, A., and Laporte, G. (1994). A Tabu Search Heuristic for the Vehicle Routing Problem. *Management Science*, 40(10), 1276–1290.
+**The mixed fleet configuration is both more expensive and produces more miles than the pure Van solution.** This counterintuitive result has a clear structural explanation: ST-required orders constrain route building. ST routes are capped at 1,400 ft³ (vs 3,200 ft³ for Vans), so more routes are needed to cover the same freight volume (39 vs 32). The higher per-mile cost of ST operations ($0.820/mi vs $0.725/mi) and the ST trailer premium ($25/day) compound this effect. The mixed fleet is not a cost reduction strategy — it is a service requirement for stores that cannot accept Van deliveries.
 
-3. Glover, F. (1986). Future Paths for Integer Programming and Links to Artificial Intelligence. *Computers & Operations Research*, 13(5), 533–549.
+> Note: the ALNS Mixed Fleet configuration was not included in the uploaded comparison outputs.
 
-4. Kirkpatrick, S., Gelatt, C.D., and Vecchi, M.P. (1983). Optimization by Simulated Annealing. *Science*, 220(4598), 671–680.
+## 5. Sub-problem 3 — Relaxed Delivery-Day Schedule
 
-5. Lin, S. (1965). Computer Solutions of the Traveling Salesman Problem. *Bell System Technical Journal*, 44(10), 2245–2269.
+### 5.1 Results summary
 
-6. Milburn, A.B., Kirac, E., and Hadianniasar, M. (2017). Growing Pains: A Case Study for Large-Scale Vehicle Routing. *INFORMS Transactions on Education*, 17(2), 81–84.
+| Method | Weekly Miles | Annual Miles | vs Baseline | Routes | Drivers | Peak Trucks | Avg Duty (h) | Weekly Cost | Annual Cost | Runtime |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Historical schedule (CW+LS) | 7,904 | 411,008 | baseline | 32 | 7 | 7 | — | $29,320 | $1,524,655 | 2s |
+| Sweep + Greedy LS | **5,328** | **277,056** | **−32.6%** | 27 | 7 | 7 | 38.3h | $23,245 | **$1,208,759** | 652s |
+| ALNS + Greedy LS | 7,476 | 388,752 | −5.4% | 30 | 6 | 6 | 53.6h | $28,010 | $1,456,532 | 146s |
 
-7. Or, I. (1976). Traveling Salesman-Type Combinatorial Problems and Their Relation to the Logistics of Regional Blood Banking. *PhD thesis*, Northwestern University.
+> Source: `outputs/relaxed_schedule/results_summary.csv`
 
-8. Osman, I.H. (1993). Metastrategy Simulated Annealing and Tabu Search Algorithms for the Vehicle Routing Problems. *Annals of Operations Research*, 41, 421–451.
+### 5.2 Key findings
 
-9. Ropke, S. and Pisinger, D. (2006). An Adaptive Large Neighborhood Search Heuristic for the Pickup and Delivery Problem with Time Windows. *Transportation Science*, 40(4), 455–472.
+**The angular sweep seed produces a transformative improvement.** Reducing weekly miles from 7,904 to 5,328 — a 2,576 mile/week saving — corresponds to 133,952 fewer miles annually and **$315,896/year cost savings** versus the historical fixed schedule. This is by far the largest single improvement in the project. The historical schedule's arbitrary day assignments created severe geographic inefficiency: stores in the same geographic zone were being served on different days, forcing routes to cover the same territory multiple times per week. The angular sweep eliminates this by front-loading geographic clustering into the day assignment itself.
 
-10. Shaw, P. (1998). Using Constraint Programming and Local Search Methods to Solve Vehicle Routing Problems. *CP 1998*, Springer, 417–431.
+**The relaxed schedule also reduces fleet requirements.** With 27 routes per week under the sweep assignment vs 32 under the historical schedule, MAD needs 5 fewer daily route equivalents. Peak trucks drop from 7 to 7 (unchanged due to daily distribution), but weekly driver workload is substantially reduced: average duty hours per driver fall to 38.3 hours/week — a sustainable, retention-friendly schedule that avoids the 55+ hour weeks that the historical assignment produced on heavy days.
+
+**ALNS inter-day improves further over sweep on driver utilisation.** ALNS+LS achieves 6 drivers and 6 peak trucks vs 7/7 for sweep+LS — a further fleet reduction. The ALNS accepts 10 moves in both cases, but the ALNS can escape local optima the greedy search cannot, finding a more balanced route-count assignment even if total miles are slightly higher.
+
+**The cost of the fixed schedule is $315,896/year.** This is the direct financial impact of NHG's historically convenient but logistically inefficient day assignment. The case paper framing is confirmed: the opportunity from schedule relaxation is substantially larger than the opportunity from routing algorithm improvement within the fixed schedule.
+
+### 5.3 Resource requirements
+
+| Metric | Sweep + LS | ALNS + LS |
+|---|---|---|
+| Min drivers | 7 | 6 |
+| Peak trucks (any day) | 7 | 6 |
+| Avg weekly duty hrs/driver | 38.3h | 53.6h |
+| Max weekly duty hrs/driver | 60.5h | 62.0h |
+| Trucks Mon / Tue / Wed / Thu / Fri | 4 / 5 / 7 / 6 / 5 | 6 / 6 / 6 / 6 / 6 |
+
+The ALNS assignment produces perfectly balanced truck counts across all five days (6 per day) — a direct result of the `lambda_balance` penalty in the schedule score function. The sweep assignment is slightly less balanced (4–7 trucks per day) but achieves better total mileage. ALNS trades some mileage efficiency for workload balance.
+
+> Source: `outputs/relaxed_schedule/resource_summary_sweep_ls.csv`, `resource_summary_alns_ls.csv`
+
+## 6. Resource Requirements Summary
+
+### 6.1 Fleet and driver requirements
+
+| Configuration | Min Drivers | Peak Trucks | Weekly Routes | Trucks Mon/Tue/Wed/Thu/Fri |
+|---|---|---|---|---|
+| CW Only | 7 | 7 | 32 | 5 / 7 / 7 / 7 / 6 |
+| CW + 2-opt/Or-opt | 7 | 7 | 32 | 5 / 7 / 7 / 7 / 6 |
+| ALNS | 7 | 7 | 31 | 5 / 6 / 7 / 7 / 6 |
+| CW + Overnight | 11 | 7 | 26 | — |
+| ALNS + Overnight | 12 | 7 | 27 | — |
+| Mixed Fleet | 10 | 9 | 39 | — |
+| Relaxed (Sweep+LS) | 7 | 7 | 27 | 4 / 5 / 7 / 6 / 5 |
+| Relaxed (ALNS+LS) | **6** | **6** | 30 | 6 / 6 / 6 / 6 / 6 |
+
+### 6.2 Driver workload and sustainability
+
+The relaxed schedule dramatically improves driver workload sustainability. Under the historical CW+LS schedule, the bipartite matching assigns 7 drivers covering 32 routes per week — an average of 4.6 routes per driver, implying multi-day duty most weeks. Under Sweep+LS, 7 drivers cover 27 routes at reduced total mileage, with average duty of 38.3 hours/week — well within the sustainable 40–55 hour range for dedicated regional drivers.
+
+The maximum weekly duty hours under Sweep+LS is 60.5h, and under ALNS+LS is 62.0h. These drivers are approaching the DOT 70-hour/8-day limit. The HOS buffer sensitivity (Group C of `VRP_SensitivityAnalysis.py`) quantifies the cost of adding a safety margin.
+
+## 7. Convergence Analysis
+
+### 7.1 ALNS operator weights
+
+The ALNS weight history (available in `outputs/comparison/operator_weights_alns.png`) reveals which destroy operator dominated. Based on the per-day data, Tuesday's route count reduction from 7 to 6 was ALNS's primary contribution — consistent with the **route removal operator** dominating weights, as route removal is the only operator that can eliminate an entire route in one move. This identifies vehicle count reduction as the binding constraint ALNS was exploiting, not geographic re-clustering.
+
+> Insert `outputs/comparison/convergence_alns.png`
+> Insert `outputs/comparison/operator_weights_alns.png`
+
+## 8. Cost Analysis
+
+### 8.1 Annual cost by scenario
+
+| Scenario | Weekly Miles | Weekly Cost | Annual Cost | vs CW+LS Annual |
+|---|---|---|---|---|
+| CW + 2-opt/Or-opt (baseline) | 7,904 | $29,320 | $1,524,655 | — |
+| ALNS | 7,844 | $29,110 | $1,513,727 | −$10,928 |
+| Tabu Search | 7,893 | $29,293 | $1,523,215 | −$1,440 |
+| Simulated Annealing | 7,904 | $29,320 | $1,524,655 | $0 |
+| CW + Overnight | 7,780 | $31,167 | $1,620,695 | **+$96,041** |
+| ALNS + Overnight | 7,610 | $29,991 | $1,559,540 | **+$34,886** |
+| Mixed Fleet | 8,376 | $32,383 | $1,683,939 | **+$159,284** |
+| Relaxed (Sweep+LS) | **5,328** | **$23,245** | **$1,208,759** | **−$315,896** |
+| Relaxed (ALNS+LS) | 7,476 | $28,010 | $1,456,532 | −$68,123 |
+
+> Source: `outputs/cost_analysis/cost_summary.csv`
+
+### 8.2 Key cost observations
+
+**Labour dominates cost, not mileage.** Under ATRI 2024 benchmark rates, driver wages and benefits together account for the majority of per-route cost. This explains why overnight routing can save miles but increase total cost — the per diem and equipment premium apply per driver-overnight, not per mile.
+
+**Route count is the primary cost lever.** Mixed fleet has the highest annual cost ($1,683,939) despite not being the worst mileage configuration — 39 routes at higher per-route fixed costs (equipment + insurance + driver shift) drives the premium. Conversely, the relaxed sweep schedule achieves the lowest annual cost ($1,208,759) largely because 27 routes incur 5 fewer vehicle-days of equipment and insurance per week.
+
+**Sensitivity to driver wage rates.** A $4/hour increase in the Northeast MA market wage (from $32 to $36) would add approximately $55,000–$70,000/year across configurations, given the 30% benefits loading multiplier. The ALNS and sweep configurations are less exposed to this risk because they use fewer driver-hours per week.
+
+## 9. EDA Highlights
+
+### 9.1 Demand distribution
+
+| Day | Orders | Total Cube (ft³) | Mean Cube (ft³) | Routes (CW+LS) |
+|---|---|---|---|---|
+| Monday | 43 | 10,223 | ~238 | 5 |
+| Tuesday | 58 | 11,537 | ~199 | 7 |
+| Wednesday | 50 | 15,192 | ~304 | 7 |
+| Thursday | 63 | 15,009 | ~238 | 7 |
+| Friday | 47 | 13,468 | ~287 | 6 |
+
+Wednesday carries the highest average cube per order (~304 ft³) while Thursday has the most orders (63). These combine to make Wednesday and Thursday the hardest days for vehicle packing. The day-by-day results confirm this: Wednesday and Thursday account for 14 of the 32 weekly routes (44%) despite representing only 43% of orders.
+
+## 10. Key Findings
+
+**Finding 1 — Value of local search over pure construction**
+CW + 2-opt/Or-opt reduces weekly miles by 0.5% (36 miles) over CW Only at negligible runtime cost. The improvement is modest because CW's consolidation phase already produces near-tight routes. The primary value of local search is consistency — it closes obvious gaps that CW's greedy construction misses, ensuring a clean baseline.
+
+**Finding 2 — Metaheuristic marginal improvement**
+ALNS achieves 7,844 miles — the best day-cab result — by consolidating Tuesday from 7 to 6 routes via its route removal destroy operator. The total improvement over CW+LS is 0.8% (60 miles/week, $10,928/year). Tabu Search and Simulated Annealing produce negligible improvements. The binding constraint for this instance is **route count on Tuesday**, not geographic sequencing or capacity packing. ALNS finds the improvement because only the route removal operator can eliminate an entire route in one move.
+
+**Finding 3 — Overnight routing is not cost-justified**
+Despite reducing mileage by 1.6–3.7%, overnight routing increases annual cost by $34,886–$96,041 due to per diem and sleeper cab premiums. The mileage saving of $0.725/mile is insufficient to offset the $140/overnight pair cost ($80 per diem + $60 sleeper premium). NHG should maintain day-cab operations unless MAD can negotiate per diem rates below approximately $20/overnight pair.
+
+**Finding 4 — Mixed fleet is a service requirement, not a cost reduction**
+The mixed fleet produces 6% more miles and costs $159,284/year more than the pure Van solution. ST-required orders fragment route structure and ST vehicles carry higher per-mile costs. The mixed fleet is operationally necessary for stores without van-compatible receiving facilities, but NHG should work to minimise the proportion of ST-required orders over time.
+
+**Finding 5 — The relaxed schedule is the dominant opportunity**
+The angular sweep + greedy local search reduces weekly miles from 7,904 to 5,328 — a 32.6% improvement worth $315,896/year. The historical schedule's arbitrary day assignments were creating severe geographic inefficiency that no routing algorithm working within the fixed schedule could correct. This is the single most valuable finding in the project: the choice of *which day* each store is served matters far more than the choice of routing algorithm used within that day.
+
+**Finding 6 — Driver workload sustainability**
+The relaxed sweep schedule reduces average driver duty hours to 38.3h/week — a sustainable and retention-friendly schedule. The historical fixed schedule produced days where individual drivers covered 60+ hours of duty, creating turnover risk. The ALNS relaxed schedule achieves perfectly balanced truck counts (6 per day), directly addressing NHG's stated concern about predictable staffing levels.
+
+## 11. Limitations and Assumptions
+
+- All distances are road-network miles from the 2014 Google Maps API. Current road conditions may differ.
+- Vehicle speed is assumed constant at 40 mph. Urban segments around Boston likely average 25–30 mph; highway segments to Vermont and upstate New York may average 55 mph. The driving speed sensitivity (Group B of `VRP_SensitivityAnalysis.py`) brackets this assumption.
+- The dataset represents a single average week. The peak-week sensitivity (Group A, A2) shows the impact of Wednesday/Thursday demand spikes.
+- The DOT 70-hour/8-day rolling rule is not modelled.
+- Cost rates are 2024–25 benchmark estimates for Northeast US dedicated contract carriers. MAD's actual quoted rates will differ. The `CostModel` is fully parameterised for substitution.
+- The minimum driver calculation assumes interchangeable drivers. Union rules, home domicile constraints, or driver specialisation may increase the effective headcount above the mathematical minimum.
+- The relaxed schedule 32.6% improvement assumes MAD can operationally implement the reassigned schedule. NHG store managers and MAD schedulers would need to agree to the new day assignments, which may not be feasible for all 123 stores simultaneously.

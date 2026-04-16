@@ -1,0 +1,322 @@
+day,route_number,stop_sequence,order_id,location,arrival_time,departure_time,delivery_volume_cuft
+Mon,1,0,0,DC (Wilmington),,07:43,
+Mon,1,1,22,North Andover,08:00,08:30,286.0
+Mon,1,2,4,North Andover,08:30,09:00,111.0
+Mon,1,3,132,North Berwick,10:36,11:06,244.0
+Mon,1,4,66,Wenham,12:40,13:10,197.0
+Mon,1,5,8,Lynn,13:37,14:07,100.0
+Mon,1,6,23,Charlestown,14:24,15:14,1676.0
+Mon,1,7,255,Charlestown,15:14,15:44,120.0
+Mon,1,8,0,DC (Wilmington),16:08,,
+Mon,2,0,0,DC (Wilmington),,07:27,
+Mon,2,1,188,Weston,08:00,08:30,127.0
+Mon,2,2,32,Weston,08:30,09:00,152.0
+Mon,2,3,117,Auburndale,09:08,09:38,161.0
+Mon,2,4,26,Wellesley Hills,09:43,10:13,409.0
+Mon,2,5,90,West Roxbury,10:27,10:57,187.0
+Mon,2,6,221,Chestnut Hill,11:01,11:31,143.0
+Mon,2,7,178,Brighton,11:36,12:06,165.0
+Mon,2,8,131,Allston,12:10,12:40,142.0
+Mon,2,9,103,Boston,12:46,13:16,130.0
+Mon,2,10,189,Boston,13:16,13:46,123.0
+Mon,2,11,245,Boston,13:46,14:16,227.0
+Mon,2,12,70,Boston,14:19,14:49,200.0
+Mon,2,13,28,Boston,14:49,15:19,85.0
+Mon,2,14,209,Boston,15:21,15:51,246.0
+Mon,2,15,47,Boston,15:51,16:21,121.0
+Mon,2,16,73,Boston,16:21,16:51,120.0
+Mon,2,17,244,Boston,16:54,17:24,163.0
+Mon,2,18,162,Boston,17:27,17:57,106.0
+Mon,2,19,0,DC (Wilmington),18:22,,
+Mon,3,0,0,DC (Wilmington),,04:50,
+Mon,3,1,128,Middletown,08:00,08:30,204.0
+Mon,3,2,109,Middletown,08:30,09:00,198.0
+Mon,3,3,250,Hamden,09:34,10:04,167.0
+Mon,3,4,157,Old Greenwich,11:16,11:46,126.0
+Mon,3,5,87,Wilton,12:15,12:45,163.0
+Mon,3,6,85,Fairfield,13:06,13:36,127.0
+Mon,3,7,241,Bethany,14:18,14:48,153.0
+Mon,3,8,0,DC (Wilmington),18:27,,
+Mon,4,0,0,DC (Wilmington),,02:58,
+Mon,4,1,175,Burlington,08:00,08:30,160.0
+Mon,4,2,258,Burlington,08:30,09:00,165.0
+Mon,4,3,0,DC (Wilmington),14:02,,
+Mon,5,0,0,DC (Wilmington),,05:39,
+Mon,5,1,217,Storrs Mansfield,08:00,08:30,220.0
+Mon,5,2,155,Manchester,08:56,09:26,184.0
+Mon,5,3,180,Bolton,09:35,10:05,159.0
+Mon,5,4,40,Colchester,10:32,11:02,213.0
+Mon,5,5,120,New London,11:38,12:08,124.0
+Mon,5,6,76,New London,12:08,12:38,631.0
+Mon,5,7,207,Groton,12:45,13:15,145.0
+Mon,5,8,237,Groton,13:15,13:45,148.0
+Mon,5,9,67,Dayville,15:00,15:30,102.0
+Mon,5,10,20,Westborough,16:33,17:03,111.0
+Mon,5,11,201,Marlborough,17:18,17:48,124.0
+Mon,5,12,0,DC (Wilmington),18:52,,
+Mon,6,0,0,DC (Wilmington),,07:48,
+Mon,6,1,251,Billerica,08:00,08:30,146.0
+Mon,6,2,45,East Hartford,11:04,11:34,242.0
+Mon,6,3,223,Hartford,11:40,12:10,144.0
+Mon,6,4,152,Hartford,12:10,12:40,211.0
+Mon,6,5,58,Hartford,12:40,13:10,183.0
+Mon,6,6,80,Hartford,13:12,13:42,110.0
+Mon,6,7,14,Farmington,13:58,14:43,1479.0
+Mon,6,8,104,Hartford,14:58,15:28,124.0
+Mon,6,9,192,Hartford,15:29,15:59,127.0
+Mon,6,10,253,Windsor,16:13,16:43,94.0
+Mon,6,11,15,Windsor,16:43,17:13,157.0
+Mon,6,12,168,Windsor Locks,17:20,17:50,170.0
+Mon,6,13,0,DC (Wilmington),20:43,,
+Tue,1,0,0,DC (Wilmington),,05:05,
+Tue,1,1,121,Glastonbury,08:00,08:30,243.0
+Tue,1,2,50,Glastonbury,08:30,09:00,131.0
+Tue,1,3,150,Middletown,09:30,10:00,133.0
+Tue,1,4,57,Middletown,10:00,10:30,180.0
+Tue,1,5,74,Bethany,11:11,11:41,210.0
+Tue,1,6,213,Farmington,12:26,12:56,154.0
+Tue,1,7,52,Farmington,12:56,13:26,180.0
+Tue,1,8,123,Farmington,13:26,13:56,151.0
+Tue,1,9,246,Farmington,13:56,14:26,129.0
+Tue,1,10,39,West Hartland,15:03,15:33,257.0
+Tue,1,11,0,DC (Wilmington),18:49,,
+Tue,2,0,0,DC (Wilmington),,05:15,
+Tue,2,1,88,Manchester,08:00,08:30,131.0
+Tue,2,2,254,Hartford,08:42,09:12,111.0
+Tue,2,3,148,Hartford,09:15,09:45,496.0
+Tue,2,4,216,Hartford,09:47,10:17,263.0
+Tue,2,5,235,Hartford,10:17,10:47,105.0
+Tue,2,6,177,Hartford,10:51,11:21,164.0
+Tue,2,7,133,Enfield,11:57,12:27,121.0
+Tue,2,8,179,Enfield,12:27,12:57,135.0
+Tue,2,9,231,Northampton,13:40,14:10,151.0
+Tue,2,10,203,Fitchburg,15:52,16:22,444.0
+Tue,2,11,176,Bedford,17:14,17:44,226.0
+Tue,2,12,0,DC (Wilmington),18:05,,
+Tue,3,0,0,DC (Wilmington),,07:02,
+Tue,3,1,89,Clinton,08:00,08:30,390.0
+Tue,3,2,68,Groton,10:42,11:12,81.0
+Tue,3,3,243,New London,11:22,11:52,89.0
+Tue,3,4,49,New London,11:52,12:22,256.0
+Tue,3,5,101,New London,12:22,12:52,103.0
+Tue,3,6,29,Groton,13:00,13:30,199.0
+Tue,3,7,212,Weston,16:03,16:33,114.0
+Tue,3,8,78,Billerica,16:59,17:29,146.0
+Tue,3,9,108,Billerica,17:29,17:59,261.0
+Tue,3,10,0,DC (Wilmington),18:11,,
+Tue,4,0,0,DC (Wilmington),,04:05,
+Tue,4,1,105,Shelton,08:00,08:30,572.0
+Tue,4,2,60,Norwalk,09:09,09:39,110.0
+Tue,4,3,224,Stamford,09:54,10:24,276.0
+Tue,4,4,153,Stamford,10:24,10:54,149.0
+Tue,4,5,18,Greenwich,11:05,11:35,394.0
+Tue,4,6,107,Stamford,11:50,12:20,106.0
+Tue,4,7,125,Stamford,12:20,12:50,182.0
+Tue,4,8,0,DC (Wilmington),17:29,,
+Tue,5,0,0,DC (Wilmington),,07:33,
+Tue,5,1,122,Boston,08:00,08:30,283.0
+Tue,5,2,33,Boston,08:30,09:00,247.0
+Tue,5,3,51,Boston,09:00,09:30,135.0
+Tue,5,4,141,Boston,09:33,10:03,123.0
+Tue,5,5,185,Boston,10:03,10:33,158.0
+Tue,5,6,92,Boston,10:35,11:05,226.0
+Tue,5,7,140,Boston,11:06,11:36,136.0
+Tue,5,8,72,Boston,11:36,12:06,199.0
+Tue,5,9,71,Cambridge,12:09,12:39,164.0
+Tue,5,10,239,Cambridge,12:39,13:09,122.0
+Tue,5,11,186,Cambridge,13:11,13:41,131.0
+Tue,5,12,163,Cambridge,13:41,14:11,119.0
+Tue,5,13,9,Cambridge,14:11,14:41,182.0
+Tue,5,14,10,Boston,14:45,15:15,203.0
+Tue,5,15,34,Boston,15:15,15:45,301.0
+Tue,5,16,187,Cambridge,15:51,16:21,143.0
+Tue,5,17,211,Cambridge,16:21,16:51,141.0
+Tue,5,18,0,DC (Wilmington),17:17,,
+Tue,6,0,0,DC (Wilmington),,08:00,
+Tue,6,1,7,Wilmington,08:00,08:30,491.0
+Tue,6,2,234,Dover,09:56,10:26,237.0
+Tue,6,3,181,Parsonsfield,11:41,12:11,243.0
+Tue,6,4,182,Rumford,14:12,14:42,140.0
+Tue,6,5,0,DC (Wilmington),18:52,,
+Wed,1,0,0,DC (Wilmington),,07:51,
+Wed,1,1,6,Tewksbury,08:00,09:21,2699.0
+Wed,1,2,138,Lowell,09:34,10:04,159.0
+Wed,1,3,13,Keene,11:40,12:10,117.0
+Wed,1,4,225,Keene,12:10,12:40,129.0
+Wed,1,5,0,DC (Wilmington),14:51,,
+Wed,2,0,0,DC (Wilmington),,07:35,
+Wed,2,1,43,Boston,08:00,08:30,152.0
+Wed,2,2,77,Boston,08:33,09:03,157.0
+Wed,2,3,139,Duxbury,09:52,10:22,176.0
+Wed,2,4,24,Rockland,10:47,11:49,2077.0
+Wed,2,5,91,Boston,12:22,12:52,250.0
+Wed,2,6,158,Boston,12:52,13:22,170.0
+Wed,2,7,260,Brighton,13:31,14:01,132.0
+Wed,2,8,0,DC (Wilmington),14:35,,
+Wed,3,0,0,DC (Wilmington),,04:24,
+Wed,3,1,54,Hamden,08:00,08:30,283.0
+Wed,3,2,261,West Haven,08:43,09:13,130.0
+Wed,3,3,171,Norwalk,10:00,10:30,376.0
+Wed,3,4,257,Stamford,10:45,11:15,235.0
+Wed,3,5,53,Stamford,11:26,11:56,112.0
+Wed,3,6,156,Stamford,11:59,12:29,197.0
+Wed,3,7,48,Bethany,13:39,14:09,396.0
+Wed,3,8,115,Plainville,14:45,15:15,286.0
+Wed,3,9,0,DC (Wilmington),18:22,,
+Wed,4,0,0,DC (Wilmington),,07:13,
+Wed,4,1,149,Framingham,08:00,08:30,137.0
+Wed,4,2,116,Marlborough,08:39,09:09,164.0
+Wed,4,3,200,Worcester,09:38,10:08,159.0
+Wed,4,4,65,Smithfield,11:06,11:36,212.0
+Wed,4,5,62,Providence,11:51,12:21,241.0
+Wed,4,6,12,East Providence,12:25,12:55,608.0
+Wed,4,7,27,East Providence,12:55,13:43,1594.0
+Wed,4,8,0,DC (Wilmington),15:30,,
+Wed,5,0,0,DC (Wilmington),,05:48,
+Wed,5,1,205,Newport,08:00,08:30,366.0
+Wed,5,2,233,Exeter,09:02,09:32,151.0
+Wed,5,3,193,Storrs Mansfield,10:45,11:15,118.0
+Wed,5,4,106,Storrs Mansfield,11:15,11:45,186.0
+Wed,5,5,167,Glastonbury,12:18,12:48,140.0
+Wed,5,6,238,East Hartford,13:02,13:32,246.0
+Wed,5,7,35,Hartford,13:39,14:09,236.0
+Wed,5,8,248,Hartford,14:11,14:41,149.0
+Wed,5,9,55,Windsor Locks,15:03,15:33,112.0
+Wed,5,10,220,Windsor Locks,15:33,16:03,98.0
+Wed,5,11,81,Springfield,16:26,16:56,140.0
+Wed,5,12,0,DC (Wilmington),19:24,,
+Wed,6,0,0,DC (Wilmington),,07:35,
+Wed,6,1,206,Boston,08:00,08:30,176.0
+Wed,6,2,96,Boston,08:32,09:02,106.0
+Wed,6,3,240,Boston,09:02,09:32,174.0
+Wed,6,4,38,Medford,09:41,10:11,143.0
+Wed,6,5,173,Medford,10:11,10:41,96.0
+Wed,6,6,1,Woburn,10:50,11:20,333.0
+Wed,6,7,37,Woburn,11:20,11:50,128.0
+Wed,6,8,135,Tewksbury,12:12,12:42,101.0
+Wed,6,9,0,DC (Wilmington),12:51,,
+Thu,1,0,0,DC (Wilmington),,05:12,
+Thu,1,1,127,Hartford,08:00,08:30,127.0
+Thu,1,2,36,Hartford,08:33,09:03,102.0
+Thu,1,3,102,Glastonbury,09:15,09:45,168.0
+Thu,1,4,61,Wallingford,10:24,10:54,103.0
+Thu,1,5,134,Meriden,11:08,11:38,225.0
+Thu,1,6,119,Bethany,12:02,12:32,138.0
+Thu,1,7,166,New London,13:58,14:28,474.0
+Thu,1,8,93,Groton,14:36,15:06,219.0
+Thu,1,9,160,Groton,15:06,15:36,260.0
+Thu,1,10,0,DC (Wilmington),18:38,,
+Thu,2,0,0,DC (Wilmington),,04:18,
+Thu,2,1,63,New Haven,08:00,08:30,112.0
+Thu,2,2,256,Norwalk,09:21,09:51,152.0
+Thu,2,3,197,Norwalk,09:57,10:27,348.0
+Thu,2,4,137,New Canaan,10:39,11:09,195.0
+Thu,2,5,147,Stamford,11:22,11:52,173.0
+Thu,2,6,227,Ridgefield,12:15,12:45,125.0
+Thu,2,7,214,Danbury,12:55,13:25,251.0
+Thu,2,8,247,Danbury,13:25,13:55,166.0
+Thu,2,9,0,DC (Wilmington),18:12,,
+Thu,3,0,0,DC (Wilmington),,07:51,
+Thu,3,1,5,Reading,08:00,08:30,206.0
+Thu,3,2,142,Weston,09:00,09:30,195.0
+Thu,3,3,75,Weston,09:30,10:00,122.0
+Thu,3,4,100,Weston,10:00,10:30,265.0
+Thu,3,5,219,Framingham,10:47,11:17,137.0
+Thu,3,6,229,Marlborough,11:26,11:56,180.0
+Thu,3,7,154,Norton,12:54,13:24,345.0
+Thu,3,8,259,North Dartmouth,14:22,14:52,131.0
+Thu,3,9,232,Weymouth,16:15,16:45,146.0
+Thu,3,10,0,DC (Wilmington),17:34,,
+Thu,4,0,0,DC (Wilmington),,07:43,
+Thu,4,1,196,Winchester,08:00,08:30,250.0
+Thu,4,2,99,Cambridge,08:39,09:09,172.0
+Thu,4,3,215,Boston,09:15,09:45,178.0
+Thu,4,4,124,Boston,09:45,10:15,160.0
+Thu,4,5,190,Boston,10:15,10:45,140.0
+Thu,4,6,97,Cambridge,10:49,11:19,203.0
+Thu,4,7,210,Cambridge,11:19,11:49,401.0
+Thu,4,8,183,Boston,11:52,12:22,203.0
+Thu,4,9,69,Boston,12:22,12:52,141.0
+Thu,4,10,42,Boston,12:52,13:22,135.0
+Thu,4,11,118,Boston,13:22,13:52,117.0
+Thu,4,12,79,Boston,13:54,14:24,148.0
+Thu,4,13,202,Boston,14:28,14:58,121.0
+Thu,4,14,46,Cambridge,15:02,15:32,137.0
+Thu,4,15,31,Cambridge,15:32,16:01,173.0
+Thu,4,16,95,Cambridge,16:01,16:31,114.0
+Thu,4,17,159,Boston,16:34,17:04,119.0
+Thu,4,18,184,Boston,17:04,17:34,153.0
+Thu,4,19,0,DC (Wilmington),18:00,,
+Thu,5,0,0,DC (Wilmington),,05:08,
+Thu,5,1,218,Hanover,08:00,08:30,193.0
+Thu,5,2,146,Hanover,08:30,09:00,189.0
+Thu,5,3,194,Hanover,09:00,09:30,112.0
+Thu,5,4,86,Lebanon,09:52,10:22,193.0
+Thu,5,5,56,Manchester,12:11,12:41,94.0
+Thu,5,6,136,Manchester,12:47,13:17,257.0
+Thu,5,7,199,Manchester,13:24,13:54,197.0
+Thu,5,8,195,Merrimack,14:12,14:42,319.0
+Thu,5,9,113,Westford,15:17,15:47,163.0
+Thu,5,10,21,Billerica,16:09,16:51,1396.0
+Thu,5,11,0,DC (Wilmington),17:03,,
+Thu,6,0,0,DC (Wilmington),,07:32,
+Thu,6,1,25,Waltham,08:00,09:18,2614.0
+Thu,6,2,222,Portland,12:09,12:39,105.0
+Thu,6,3,151,Portland,12:39,13:09,105.0
+Thu,6,4,170,Portland,13:09,13:39,188.0
+Thu,6,5,84,Westbrook,13:50,14:20,175.0
+Thu,6,6,0,DC (Wilmington),16:50,,
+Fri,1,0,0,DC (Wilmington),,07:48,
+Fri,1,1,2,Billerica,08:00,08:30,556.0
+Fri,1,2,126,Woburn,08:43,09:13,195.0
+Fri,1,3,59,Charlestown,09:28,09:58,187.0
+Fri,1,4,208,Boston,10:02,10:32,140.0
+Fri,1,5,236,Boston,10:36,11:06,221.0
+Fri,1,6,169,Boston,11:08,11:38,202.0
+Fri,1,7,82,Boston,11:39,12:09,161.0
+Fri,1,8,242,Cambridge,12:18,12:48,109.0
+Fri,1,9,0,DC (Wilmington),13:14,,
+Fri,2,0,0,DC (Wilmington),,07:43,
+Fri,2,1,3,Lawrence,08:00,08:30,903.0
+Fri,2,2,110,Portland,10:45,11:15,177.0
+Fri,2,3,252,Salem,13:38,14:08,181.0
+Fri,2,4,230,Reading,14:27,14:57,132.0
+Fri,2,5,0,DC (Wilmington),15:06,,
+Fri,3,0,0,DC (Wilmington),,07:27,
+Fri,3,1,11,Weston,08:00,09:35,3153.0
+Fri,3,2,0,DC (Wilmington),10:08,,
+Fri,4,0,0,DC (Wilmington),,04:58,
+Fri,4,1,44,Groton,08:00,08:30,164.0
+Fri,4,2,17,New London,08:38,09:08,343.0
+Fri,4,3,143,New London,09:08,09:38,164.0
+Fri,4,4,226,Stratford,11:12,11:42,187.0
+Fri,4,5,112,Stratford,11:42,12:12,181.0
+Fri,4,6,98,Bethany,12:48,13:18,98.0
+Fri,4,7,164,Bethany,13:18,13:48,149.0
+Fri,4,8,16,Hartford,14:40,15:10,255.0
+Fri,4,9,145,Hartford,15:12,15:42,122.0
+Fri,4,10,0,DC (Wilmington),18:28,,
+Fri,5,0,0,DC (Wilmington),,03:51,
+Fri,5,1,64,Fairfield,08:00,08:30,143.0
+Fri,5,2,129,Stamford,08:57,09:27,88.0
+Fri,5,3,19,Stamford,09:28,09:58,896.0
+Fri,5,4,83,Ridgefield,10:34,11:04,172.0
+Fri,5,5,172,Danbury,11:15,11:45,261.0
+Fri,5,6,144,Danbury,11:49,12:19,147.0
+Fri,5,7,111,New Britain,13:38,14:08,186.0
+Fri,5,8,204,New Britain,14:09,14:39,423.0
+Fri,5,9,0,DC (Wilmington),17:39,,
+Fri,6,0,0,DC (Wilmington),,07:32,
+Fri,6,1,191,Waltham,08:00,08:30,131.0
+Fri,6,2,174,Waltham,08:39,09:09,182.0
+Fri,6,3,165,Weston,09:15,09:45,128.0
+Fri,6,4,249,Framingham,10:02,10:32,106.0
+Fri,6,5,228,Southborough,10:43,11:13,119.0
+Fri,6,6,198,Westborough,11:24,11:54,102.0
+Fri,6,7,130,Webster,12:33,13:03,336.0
+Fri,6,8,114,Tolland,14:20,14:50,78.0
+Fri,6,9,161,East Hartford,15:17,15:47,237.0
+Fri,6,10,30,East Hartford,15:47,16:16,205.0
+Fri,6,11,94,East Hartford,16:16,16:46,150.0
+Fri,6,12,41,Granby,17:18,17:48,163.0
+Fri,6,13,0,DC (Wilmington),20:55,,
