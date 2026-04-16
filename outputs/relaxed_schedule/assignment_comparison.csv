@@ -1,0 +1,16 @@
+method,day,cube,target,pct_of_target
+Fixed,Mon,10223,13085,78.1
+Fixed,Tue,11537,13085,88.2
+Fixed,Wed,15192,13085,116.1
+Fixed,Thu,15009,13085,114.7
+Fixed,Fri,13468,13085,102.9
+Angular Sweep,Mon,15464,13085,118.2
+Angular Sweep,Tue,17846,13085,136.4
+Angular Sweep,Wed,11974,13085,91.5
+Angular Sweep,Thu,11404,13085,87.1
+Angular Sweep,Fri,8741,13085,66.8
+CP-SAT,Mon,16196,13085,123.8
+CP-SAT,Tue,16310,13085,124.6
+CP-SAT,Wed,12115,13085,92.6
+CP-SAT,Thu,10994,13085,84.0
+CP-SAT,Fri,9814,13085,75.0

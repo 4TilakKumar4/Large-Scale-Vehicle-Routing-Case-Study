@@ -1,0 +1,7 @@
+config,label,weekly_miles,annual_miles,weekly_routes,min_drivers,peak_trucks,weekly_cost,annual_cost,assign_time_s,routing_time_s,total_time_s,all_feasible
+fixed_cw,Fixed + CW (baseline),7904,411008,32,7,7,29320.28,1524654.56,0.0,2.01,2.01,True
+sweep_cw,Sweep + CW,7947,413244,33,8,8,29737.79,1546365.08,0.01,2.02,2.03,True
+cpsat_cw,CP-SAT + CW,8248,428896,33,7,7,30441.67,1582966.84,0.13,2.0,2.13,True
+fixed_ort,Fixed + OR-Tools,7548,392496,30,7,7,28269.96,1470037.92,0.0,150.13,150.13,False
+sweep_ort,Sweep + OR-Tools,7700,400400,30,7,7,28747.31,1494860.12,0.01,150.14,150.15,False
+cpsat_ort,CP-SAT + OR-Tools,7985,415220,31,7,7,29519.88,1535033.76,0.14,150.13,150.27,False
