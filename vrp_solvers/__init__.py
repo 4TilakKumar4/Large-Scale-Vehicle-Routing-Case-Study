@@ -44,7 +44,10 @@ from vrp_solvers.simulatedAnnealing import SimulatedAnnealingSolver
 from vrp_solvers.tabuSearch         import TabuSearchSolver
 from vrp_solvers.mixedFleetSolver   import MixedFleetSolver, ALNSMixedFleetSolver
 from vrp_solvers.overnightSolver    import OvernightSolver
-from vrp_solvers.orToolsSolver      import ORToolsSolver
+from vrp_solvers.orToolsSolver          import ORToolsSolver
+from vrp_solvers.orToolsOvernightSolver import ORToolsOvernightSolver
+from vrp_solvers.angularSweepAssigner   import AngularSweepAssigner
+from vrp_solvers.cpSatAssigner          import CpSatAssigner
 
 # Utility classes
 from vrp_solvers.costModel        import CostModel
@@ -80,6 +83,9 @@ __all__ = [
     "ALNSMixedFleetSolver",
     "OvernightSolver",
     "ORToolsSolver",
+    "ORToolsOvernightSolver",
+    "AngularSweepAssigner",
+    "CpSatAssigner",
     # Utilities
     "CostModel",
     "ResourceAnalyser",
