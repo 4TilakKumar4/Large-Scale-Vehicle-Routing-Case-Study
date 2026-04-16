@@ -1,36 +1,36 @@
 algorithm,label,miles,routes,feasible,runtime_s,day
-cw_only,CW Only,1525,5,True,0.08,Mon
-cw_only,CW Only,1951,7,True,0.26,Tue
-cw_only,CW Only,1425,7,True,0.25,Wed
-cw_only,CW Only,1554,7,True,0.35,Thu
-cw_only,CW Only,1485,6,True,0.1,Fri
-nn_only,NN Only,1858,5,True,0.21,Mon
-nn_only,NN Only,2311,7,True,0.54,Tue
-nn_only,NN Only,1616,6,True,0.14,Wed
-nn_only,NN Only,1907,7,True,0.42,Thu
-nn_only,NN Only,2066,7,True,0.21,Fri
-cw_2opt_oropt,CW + 2-opt/Or-opt,1525,5,True,0.22,Mon
-cw_2opt_oropt,CW + 2-opt/Or-opt,1943,7,True,0.51,Tue
+cw_only,CW Only,1525,5,True,0.09,Mon
+cw_only,CW Only,1951,7,True,0.27,Tue
+cw_only,CW Only,1425,7,True,0.26,Wed
+cw_only,CW Only,1554,7,True,0.37,Thu
+cw_only,CW Only,1485,6,True,0.11,Fri
+nn_only,NN Only,1858,5,True,0.22,Mon
+nn_only,NN Only,2311,7,True,0.58,Tue
+nn_only,NN Only,1616,6,True,0.15,Wed
+nn_only,NN Only,1907,7,True,0.46,Thu
+nn_only,NN Only,2066,7,True,0.23,Fri
+cw_2opt_oropt,CW + 2-opt/Or-opt,1525,5,True,0.24,Mon
+cw_2opt_oropt,CW + 2-opt/Or-opt,1943,7,True,0.55,Tue
 cw_2opt_oropt,CW + 2-opt/Or-opt,1424,7,True,0.38,Wed
-cw_2opt_oropt,CW + 2-opt/Or-opt,1539,7,True,0.65,Thu
-cw_2opt_oropt,CW + 2-opt/Or-opt,1473,6,True,0.27,Fri
-nn_2opt_oropt,NN + 2-opt/Or-opt,1849,5,True,0.31,Mon
-nn_2opt_oropt,NN + 2-opt/Or-opt,2298,7,True,0.75,Tue
-nn_2opt_oropt,NN + 2-opt/Or-opt,1574,6,True,0.25,Wed
-nn_2opt_oropt,NN + 2-opt/Or-opt,1869,7,True,0.59,Thu
-nn_2opt_oropt,NN + 2-opt/Or-opt,1949,7,True,0.39,Fri
-tabu_search,Tabu Search,1525,5,True,19.7,Mon
-tabu_search,Tabu Search,1943,7,True,31.82,Tue
-tabu_search,Tabu Search,1421,7,True,35.03,Wed
-tabu_search,Tabu Search,1531,7,True,34.96,Thu
-tabu_search,Tabu Search,1473,6,True,21.99,Fri
-simulated_annealing,Simulated Annealing,1525,5,True,1.16,Mon
-simulated_annealing,Simulated Annealing,1943,7,True,1.85,Tue
-simulated_annealing,Simulated Annealing,1424,7,True,1.55,Wed
-simulated_annealing,Simulated Annealing,1539,7,True,1.99,Thu
-simulated_annealing,Simulated Annealing,1473,6,True,1.24,Fri
-alns,ALNS,1521,5,True,44.36,Mon
-alns,ALNS,1894,6,True,109.91,Tue
-alns,ALNS,1424,7,True,72.65,Wed
-alns,ALNS,1532,7,True,137.41,Thu
-alns,ALNS,1473,6,True,53.42,Fri
+cw_2opt_oropt,CW + 2-opt/Or-opt,1539,7,True,0.74,Thu
+cw_2opt_oropt,CW + 2-opt/Or-opt,1473,6,True,0.3,Fri
+nn_2opt_oropt,NN + 2-opt/Or-opt,1849,5,True,0.4,Mon
+nn_2opt_oropt,NN + 2-opt/Or-opt,2298,7,True,0.88,Tue
+nn_2opt_oropt,NN + 2-opt/Or-opt,1574,6,True,0.31,Wed
+nn_2opt_oropt,NN + 2-opt/Or-opt,1869,7,True,0.64,Thu
+nn_2opt_oropt,NN + 2-opt/Or-opt,1949,7,True,0.45,Fri
+tabu_search,Tabu Search,1525,5,True,19.32,Mon
+tabu_search,Tabu Search,1943,7,True,34.18,Tue
+tabu_search,Tabu Search,1421,7,True,34.97,Wed
+tabu_search,Tabu Search,1531,7,True,36.28,Thu
+tabu_search,Tabu Search,1473,6,True,22.95,Fri
+simulated_annealing,Simulated Annealing,1525,5,True,1.07,Mon
+simulated_annealing,Simulated Annealing,1943,7,True,1.7,Tue
+simulated_annealing,Simulated Annealing,1424,7,True,1.53,Wed
+simulated_annealing,Simulated Annealing,1539,7,True,1.93,Thu
+simulated_annealing,Simulated Annealing,1473,6,True,1.15,Fri
+alns,ALNS,1521,5,True,46.63,Mon
+alns,ALNS,1894,6,True,108.19,Tue
+alns,ALNS,1424,7,True,67.26,Wed
+alns,ALNS,1532,7,True,126.94,Thu
+alns,ALNS,1473,6,True,54.92,Fri

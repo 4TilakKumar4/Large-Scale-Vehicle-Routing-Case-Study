@@ -1,5 +1,5 @@
 """
-VRP_SolverComparison.py — Compare ten algorithm configurations on the NHG dataset.
+VRP_SolverComparison.py — Compare 13 algorithm configurations on the NHG dataset.
 
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
 
@@ -14,6 +14,9 @@ Comparison matrix:
     cw_overnight         CW + LS + overnight pairings
     alns_overnight       ALNS + overnight pairings
     mixed_fleet          Mixed fleet Van + Straight Truck (CW + LS)
+    alns_mixed_fleet     Mixed fleet (ALNS)
+    relaxed_sweep        Angular sweep seed + greedy LS (Sub-problem 3)
+    relaxed_alns         ALNS inter-day seed + greedy LS (Sub-problem 3)
 """
 
 import os
@@ -23,7 +26,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from vrp_solvers.base import DAYS, loadInputs, evaluateRoute
+from vrp_solvers.base import DAYS, loadInputs, evaluateRoute, loadZipCoords
 from vrp_solvers.alns               import ALNSSolver
 from vrp_solvers.clarkeWright       import ClarkeWrightSolver
 from vrp_solvers.nearestNeighbor    import NearestNeighborSolver
@@ -546,6 +549,7 @@ def main():
     makeDirs()
 
     orders, _ = loadInputs()
+    loadZipCoords()
 
     print("\nRunning all algorithms...")
     results, convergenceData, alnsWeightHist, resourceReports = runAll(orders, verbose=True)

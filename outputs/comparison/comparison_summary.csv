@@ -1,11 +1,14 @@
 algorithm,label,weekly_miles,weekly_routes,min_drivers,min_trucks_peak,weekly_cost,annual_cost,runtime_s
+relaxed_sweep,Relaxed (Sweep+LS),5328,27,7,7,23245.36,1208758.72,642.25
+relaxed_alns,Relaxed (ALNS+LS),7476,30,6,6,28010.24,1456532.48,150.11
 alns_overnight,ALNS + Overnight,7610,27,12,7,29991.16,1559540.32,0.0
 cw_overnight,CW + Overnight,7780,26,11,7,31167.22,1620695.44,0.0
-alns,ALNS,7844,31,7,7,29110.14,1513727.28,417.75
-tabu_search,Tabu Search,7893,32,7,7,29292.6,1523215.2,143.5
-cw_2opt_oropt,CW + 2-opt/Or-opt,7904,32,7,7,29320.28,1524654.56,2.03
-simulated_annealing,Simulated Annealing,7904,32,7,7,29320.28,1524654.56,7.79
-cw_only,CW Only,7940,32,7,7,29402.54,1528932.08,1.04
-mixed_fleet,Mixed Fleet (Van+ST),8376,39,10,9,32383.45,1683939.4,1.62
-nn_2opt_oropt,NN + 2-opt/Or-opt,9539,32,10,7,32837.14,1707531.28,2.29
-nn_only,NN Only,9758,32,10,7,33336.01,1733472.52,1.52
+alns,ALNS,7844,31,7,7,29110.14,1513727.28,403.94
+tabu_search,Tabu Search,7893,32,7,7,29292.6,1523215.2,147.7
+cw_2opt_oropt,CW + 2-opt/Or-opt,7904,32,7,7,29320.28,1524654.56,2.21
+simulated_annealing,Simulated Annealing,7904,32,7,7,29320.28,1524654.56,7.38
+cw_only,CW Only,7940,32,7,7,29402.54,1528932.08,1.1
+alns_mixed_fleet,ALNS Mixed Fleet,8222,36,9,8,31308.86,1628060.72,280.29
+mixed_fleet,Mixed Fleet (Van+ST),8376,39,10,9,32383.45,1683939.4,1.65
+nn_2opt_oropt,NN + 2-opt/Or-opt,9539,32,10,7,32837.14,1707531.28,2.68
+nn_only,NN Only,9758,32,10,7,33336.01,1733472.52,1.64

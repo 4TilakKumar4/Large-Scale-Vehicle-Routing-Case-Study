@@ -1,12 +1,12 @@
 """
 vrp_solvers/relaxedScheduleSolver.py — Sub-problem 3: Relaxed delivery-day scheduling.
 
-Three approaches, each returning (orders, routesByDay, dayStats, moves, score):
+Two approaches, each returning (orders, routesByDay, dayStats, moves, score):
 
   SweepRelaxedSolver         — angular sweep construction → greedy local search
   ALNSRelaxedSolver          — ALNS inter-day destroy/repair → greedy local search
 
-All three expose the same solver interface:
+Both solvers expose the same interface:
     solver = SweepRelaxedSolver()
     solver.solve(orders)
     stats  = solver.getStats()

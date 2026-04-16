@@ -1,15 +1,14 @@
 """
 VRP_RelaxedSchedule.py — Sub-problem 3: Relaxed delivery-day scheduling.
 
-Three approaches compared:
-  1. Greedy LS from historical schedule (baseline)
-  2. Angular sweep seed + greedy LS        (8–15% improvement expected)
-  3. ALNS inter-day + greedy LS            (12–20% improvement expected)
+Two approaches compared:
+  1. Angular sweep seed + greedy LS        (8–15% improvement expected)
+  2. ALNS inter-day + greedy LS            (12–20% improvement expected)
 
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
 
 Usage:
-    python VRP_RelaxedSchedule.py              # all three methods + map
+    python VRP_RelaxedSchedule.py              # both methods + map
     python VRP_RelaxedSchedule.py --no-map    # solver only (faster)
 
 Outputs:
