@@ -1,17 +1,19 @@
 """
-VRP_BaseCase.py — Clarke-Wright + 2-opt + or-opt on the NHG dataset.
+VRP_ORTools.py — Google OR-Tools CVRP on the NHG dataset (Q1: base case).
 
 Requires VRP_DataAnalysis.py to have been run first (data/ must exist).
 
 Usage:
-    python VRP_BaseCase.py              # solver + interactive map
-    python VRP_BaseCase.py --no-map    # solver only (faster, skips geocoding)
+    python VRP_ORTools.py                  # solver only
+    python VRP_ORTools.py --time 60        # set per-day time limit in seconds
+    python VRP_ORTools.py --compare        # run CW alongside OR-Tools and print diff
+    python VRP_ORTools.py --no-map         # skip map generation
 
 Outputs:
-    outputs/base_case/route_details.csv      — per-stop timing in Table 3 format
-    outputs/base_case/resource_summary.csv   — headline resource metrics
-    outputs/base_case/driver_chains.csv      — driver chain assignments
-    outputs/base_case/routes_map_baseCase.html — interactive Folium map (unless --no-map)
+    outputs/or_tools/route_details.csv      — per-stop timing in Table 3 format
+    outputs/or_tools/resource_summary.csv   — headline resource metrics
+    outputs/or_tools/driver_chains.csv      — driver chain assignments
+    outputs/or_tools/routes_map_ortools.html — interactive Folium map (unless --no-map)
 """
 
 import argparse
@@ -29,13 +31,14 @@ from vrp_solvers.base import (
     loadInputs,
     routeIds,
 )
+from vrp_solvers.orToolsSolver   import ORToolsSolver
 from vrp_solvers.clarkeWright    import ClarkeWrightSolver
 from vrp_solvers.resourceAnalyser import ResourceAnalyser
 from vrp_solvers.costModel        import CostModel
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "base_case")
-MAP_FILE   = os.path.join(OUTPUT_DIR, "routes_map_baseCase.html")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "or_tools")
+MAP_FILE   = os.path.join(OUTPUT_DIR, "routes_map_ortools.html")
 COUNTRY_CODE = "US"
 
 DAY_COLORS = {
@@ -52,33 +55,60 @@ ROUTE_PALETTE = [
 ]
 
 
-def printDayReport(day, routes):
+def printDayReport(day, routes, label="OR-Tools"):
     """Print per-route details for one day; return (total_miles, total_orders)."""
-    print(f"\n{day}")
+    print(f"\n{day}  [{label}]")
     print("-" * 60)
-    dayTotalMiles  = 0
-    dayTotalOrders = 0
+    dayMiles  = 0
+    dayOrders = 0
 
     for i, route in enumerate(routes, start=1):
-        r          = evaluateRoute(route)
-        orderCount = len(route)
+        r = evaluateRoute(route)
         print(
             f"  Route {i}: {routeIds(route)} | "
-            f"orders={orderCount} | "
-            f"miles={r['total_miles']} | cube={r['total_cube']} | "
-            f"drive={r['total_drive']}h | duty={r['total_duty']}h | "
+            f"orders={len(route)} | miles={r['total_miles']} | "
+            f"cube={r['total_cube']} | drive={r['total_drive']}h | "
+            f"duty={r['total_duty']}h | "
             f"cap={r['capacity_feasible']} dot={r['dot_feasible']} "
             f"win={r['window_feasible']} | feasible={r['overall_feasible']}"
         )
-        dayTotalMiles  += r["total_miles"]
-        dayTotalOrders += orderCount
+        dayMiles  += r["total_miles"]
+        dayOrders += len(route)
 
-    print(f"  {day} routes: {len(routes)} | orders: {dayTotalOrders} | total miles: {dayTotalMiles}")
-    return dayTotalMiles, dayTotalOrders
+    print(f"  {day} routes: {len(routes)} | orders: {dayOrders} | total miles: {dayMiles}")
+    return dayMiles, dayOrders
+
+
+def printComparisonTable(orStats, cwStats):
+    """Side-by-side OR-Tools vs Clarke-Wright summary table."""
+    print("\nSolver Comparison")
+    print("-" * 60)
+    print(f"  {'Day':<6} {'OR-Tools':>12} {'CW+LS':>12} {'Diff':>10} {'OR-T routes':>12} {'CW routes':>10}")
+    print(f"  {'-'*6} {'-'*12} {'-'*12} {'-'*10} {'-'*12} {'-'*10}")
+
+    totalOr = totalCw = 0
+    for day in DAYS:
+        orMiles  = orStats[day]["miles"]
+        cwMiles  = cwStats[day]["miles"]
+        diff     = orMiles - cwMiles
+        pct      = (diff / cwMiles * 100) if cwMiles else 0
+        totalOr += orMiles
+        totalCw += cwMiles
+        print(
+            f"  {day:<6} {orMiles:>12,} {cwMiles:>12,} "
+            f"{diff:>+9,} ({pct:+.1f}%)   "
+            f"{orStats[day]['routes']:>5}       {cwStats[day]['routes']:>5}"
+        )
+
+    diffTotal = totalOr - totalCw
+    pctTotal  = (diffTotal / totalCw * 100) if totalCw else 0
+    print(f"  {'TOTAL':<6} {totalOr:>12,} {totalCw:>12,} {diffTotal:>+9,} ({pctTotal:+.1f}%)")
+    print()
+    print("  Positive diff = OR-Tools used more miles than CW (expected for a ~4% gap solver)")
 
 
 def exportRouteDetails(routesByDay):
-    """Write per-stop timing CSV in Table 3 format. Output: outputs/base_case/route_details.csv"""
+    """Write per-stop timing CSV in Table 3 format."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     locsPath = os.path.join(DATA_DIR, "locations_clean.csv")
@@ -98,7 +128,7 @@ def exportRouteDetails(routesByDay):
 
 
 def exportResourceReport(analyser):
-    """Write resource summary and driver chains. Output: outputs/base_case/"""
+    """Write resource summary and driver chains."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     summaryDF, chainsDF = analyser.toDataFrame()
     summaryDF.to_csv(os.path.join(OUTPUT_DIR, "resource_summary.csv"), index=False)
@@ -108,7 +138,7 @@ def exportResourceReport(analyser):
 
 
 def geocodeAllZips(allZips):
-    """Geocode ZIP codes to (lat, lon) via pgeocode; fall back to MDS layout for misses."""
+    """Geocode ZIP codes to (lat, lon) via pgeocode; fall back to MDS for misses."""
     import numpy as np
     import pgeocode
 
@@ -148,10 +178,11 @@ def _mdsLayout(allZips):
                 except Exception:
                     D[i, j] = 999
 
-    pos    = MDS(n_components=2, dissimilarity="precomputed",
-                 random_state=42, normalized_stress="auto").fit_transform(D)
-    span   = pos.max(axis=0) - pos.min(axis=0)
+    pos  = MDS(n_components=2, dissimilarity="precomputed",
+               random_state=42, normalized_stress="auto").fit_transform(D)
+    span = pos.max(axis=0) - pos.min(axis=0)
     span[span == 0] = 1
+
     coords = {}
     for i, z in enumerate(allZips):
         norm      = (pos[i] - pos.min(axis=0)) / span
@@ -204,9 +235,9 @@ def buildMap(routesByDay, zipCoords):
                 z = stop["TOZIP"]
                 if z not in zipCoords:
                     continue
-                coord = zipCoords[z]
-                oid   = int(stop["ORDERID"])
-                cube  = int(stop["CUBE"])
+                coord     = zipCoords[z]
+                oid       = int(stop["ORDERID"])
+                cube      = int(stop["CUBE"])
                 popupHtml = (
                     f'<div style="font-family:monospace;font-size:13px;min-width:180px;">'
                     f"<b>{routeLabel}</b><br>Stop #{seq}<br>"
@@ -251,60 +282,81 @@ def buildMap(routesByDay, zipCoords):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="NHG Base Case — CW + local search")
-    parser.add_argument("--no-map", action="store_true",
-                        help="Skip geocoding and map generation (faster for solver iteration)")
+    parser = argparse.ArgumentParser(description="NHG OR-Tools CVRP — Q1 base case")
+    parser.add_argument("--time",    type=int, default=30,
+                        help="Per-day solver time limit in seconds (default: 30)")
+    parser.add_argument("--compare", action="store_true",
+                        help="Also run CW+LS and print a side-by-side comparison")
+    parser.add_argument("--no-map",  action="store_true",
+                        help="Skip geocoding and map generation")
     args = parser.parse_args()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     orders, _ = loadInputs()
-    solver    = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True)
 
-    routesByDay       = {}
-    weeklyTotalMiles  = 0
-    weeklyTotalRoutes = 0
-    weeklyTotalOrders = 0
+    ortSolver = ORToolsSolver(timeLimitSec=args.time)
+    cwSolver  = ClarkeWrightSolver(useTwoOpt=True, useOrOpt=True) if args.compare else None
 
-    for day in DAYS:
-        print(f"Building routes for {day}...")
-        dayOrders        = orders[orders["DayOfWeek"] == day].copy()
-        routesByDay[day] = solver.solve(dayOrders)
+    ortRoutesByDay = {}
+    cwRoutesByDay  = {}
+    ortStatsByDay  = {}
+    cwStatsByDay   = {}
 
     for day in DAYS:
-        dayMiles, dayOrds = printDayReport(day, routesByDay[day])
-        weeklyTotalMiles  += dayMiles
-        weeklyTotalRoutes += len(routesByDay[day])
-        weeklyTotalOrders += dayOrds
+        dayOrders = orders[orders["DayOfWeek"] == day].copy()
+
+        print(f"OR-Tools solving {day}  (limit={args.time}s)...")
+        ortRoutesByDay[day] = ortSolver.solve(dayOrders)
+        ortStatsByDay[day]  = ortSolver.getStats()
+
+        if cwSolver:
+            print(f"CW+LS solving {day}...")
+            cwRoutesByDay[day] = cwSolver.solve(dayOrders)
+            cwStatsByDay[day]  = cwSolver.getStats()
+
+    print("\nOR-Tools Routes")
+    print("-" * 60)
+    weeklyMiles  = 0
+    weeklyRoutes = 0
+    weeklyOrders = 0
+    for day in DAYS:
+        dayMiles, dayOrds = printDayReport(day, ortRoutesByDay[day])
+        weeklyMiles  += dayMiles
+        weeklyRoutes += len(ortRoutesByDay[day])
+        weeklyOrders += dayOrds
 
     print("\nWeekly Summary")
     print("-" * 60)
-    print(f"  Total routes:           {weeklyTotalRoutes}")
-    print(f"  Total orders fulfilled: {weeklyTotalOrders}")
-    print(f"  Total miles:            {weeklyTotalMiles:,}")
-    print(f"  Annual miles:           {weeklyTotalMiles * 52:,}")
+    print(f"  Total routes:           {weeklyRoutes}")
+    print(f"  Total orders fulfilled: {weeklyOrders}")
+    print(f"  Total miles:            {weeklyMiles:,}")
+    print(f"  Annual miles:           {weeklyMiles * 52:,}")
 
-    analyser = ResourceAnalyser(routesByDay)
+    if args.compare:
+        printComparisonTable(ortStatsByDay, cwStatsByDay)
+
+    analyser = ResourceAnalyser(ortRoutesByDay)
     analyser.analyse()
     analyser.printReport()
 
     costModel = CostModel()
-    breakdown = costModel.weeklyBreakdown(routesByDay)
-    costModel.printSummary(breakdown, label="Base Case (CW + LS)")
+    breakdown = costModel.weeklyBreakdown(ortRoutesByDay)
+    costModel.printSummary(breakdown, label="OR-Tools CVRP (Q1)")
 
     print("\nExporting outputs...")
-    exportRouteDetails(routesByDay)
+    exportRouteDetails(ortRoutesByDay)
     exportResourceReport(analyser)
 
     if not args.no_map:
         print("\nGeocoding ZIPs...")
         allZips = {DEPOT_ZIP}
-        for routes in routesByDay.values():
+        for routes in ortRoutesByDay.values():
             for route in routes:
                 for stop in route:
                     allZips.add(stop["TOZIP"])
         zipCoords = geocodeAllZips(allZips)
         print("Building map...")
-        buildMap(routesByDay, zipCoords).save(MAP_FILE)
+        buildMap(ortRoutesByDay, zipCoords).save(MAP_FILE)
         print(f"  Saved: {MAP_FILE}")
     else:
         print("\n(Map skipped — run without --no-map to generate)")

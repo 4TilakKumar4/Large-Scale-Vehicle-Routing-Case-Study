@@ -1,0 +1,124 @@
+TOZIP,CITY,STATE,orders_per_week,total_cube,delivery_days
+1060,Northampton,MA,1,151,Wed
+1101,Springfield,MA,1,140,Wed
+1420,Fitchburg,MA,1,444,Fri
+1510,Clinton,MA,1,390,Fri
+1570,Webster,MA,1,336,Fri
+1581,Westborough,MA,2,213,Fri/Mon
+1606,Worcester,MA,1,159,Wed
+1701,Framingham,MA,3,380,Fri/Thu/Wed
+1730,Bedford,MA,1,226,Tue
+1752,Marlborough,MA,3,468,Mon/Thu/Wed
+1772,Southborough,MA,1,119,Fri
+1801,Woburn,MA,3,656,Fri/Wed
+1821,Billerica,MA,5,2505,Fri/Mon/Thu/Tue
+1843,Lawrence,MA,1,903,Fri
+1845,North Andover,MA,2,397,Tue
+1854,Lowell,MA,1,159,Wed
+1867,Reading,MA,2,338,Fri/Thu
+1876,Tewksbury,MA,2,2800,Wed
+1886,Westford,MA,1,163,Thu
+1887,Wilmington,MA,1,491,Tue
+1890,Winchester,MA,1,250,Thu
+1910,Lynn,MA,1,100,Tue
+1970,Salem,MA,1,181,Fri
+1984,Wenham,MA,1,197,Tue
+2108,Boston,MA,1,121,Thu
+2110,Boston,MA,7,1111,Mon/Thu/Tue/Wed
+2111,Boston,MA,5,768,Fri/Mon/Thu/Wed
+2114,Boston,MA,6,861,Fri/Mon/Tue/Wed
+2115,Boston,MA,7,1237,Fri/Thu/Tue/Wed
+2116,Boston,MA,6,1145,Thu/Tue
+2120,Boston,MA,2,350,Fri/Thu
+2129,Charlestown,MA,3,1983,Fri/Mon
+2132,West Roxbury,MA,1,187,Mon
+2134,Allston,MA,1,142,Thu
+2135,Brighton,MA,2,297,Mon/Wed
+2138,Cambridge,MA,4,565,Fri/Thu/Tue
+2139,Cambridge,MA,5,1036,Thu/Tue
+2142,Cambridge,MA,5,710,Thu/Tue
+2155,Medford,MA,2,239,Wed
+2188,Weymouth,MA,1,146,Thu
+2199,Boston,MA,1,161,Fri
+2210,Boston,MA,2,320,Mon/Wed
+2215,Boston,MA,5,982,Thu/Tue
+2332,Duxbury,MA,1,176,Wed
+2370,Rockland,MA,1,2077,Wed
+2451,Waltham,MA,2,2745,Fri/Thu
+2453,Waltham,MA,1,182,Fri
+2466,Auburndale,MA,1,161,Mon
+2467,Chestnut Hill,MA,1,143,Tue
+2481,Wellesley Hills,MA,1,409,Tue
+2493,Weston,MA,8,4256,Fri/Mon/Thu/Tue
+2747,North Dartmouth,MA,1,131,Thu
+2766,Norton,MA,1,345,Thu
+2822,Exeter,RI,1,151,Wed
+2840,Newport,RI,1,366,Wed
+2903,Providence,RI,1,241,Wed
+2914,East Providence,RI,2,2202,Wed
+2917,Smithfield,RI,1,212,Wed
+3054,Merrimack,NH,1,319,Thu
+3101,Manchester,NH,1,94,Thu
+3103,Manchester,NH,1,197,Thu
+3109,Manchester,NH,1,257,Thu
+3431,Keene,NH,2,246,Wed
+3755,Hanover,NH,3,494,Thu/Tue
+3766,Lebanon,NH,1,193,Thu
+3820,Dover,NH,1,237,Tue
+3906,North Berwick,ME,1,244,Mon
+4047,Parsonsfield,ME,1,243,Tue
+4092,Westbrook,ME,1,175,Thu
+4101,Portland,ME,4,575,Fri/Thu
+4276,Rumford,ME,1,140,Tue
+5401,Burlington,VT,2,325,Mon
+6032,Farmington,CT,5,2093,Fri/Mon/Tue/Wed
+6033,Glastonbury,CT,4,682,Thu/Tue/Wed
+6035,Granby,CT,1,163,Fri
+6040,Manchester,CT,2,315,Mon/Tue
+6043,Bolton,CT,1,159,Mon
+6050,New Britain,CT,1,186,Fri
+6051,New Britain,CT,1,423,Fri
+6062,Plainville,CT,1,286,Wed
+6082,Enfield,CT,2,256,Tue
+6084,Tolland,CT,1,78,Fri
+6091,West Hartland,CT,1,257,Tue
+6095,Windsor,CT,2,251,Mon/Wed
+6096,Windsor Locks,CT,3,380,Mon/Wed
+6102,Hartford,CT,1,110,Mon
+6103,Hartford,CT,3,351,Fri/Mon/Thu
+6105,Hartford,CT,3,772,Thu/Tue/Wed
+6106,Hartford,CT,1,164,Tue
+6108,East Hartford,CT,5,1080,Fri/Mon/Wed
+6115,Hartford,CT,1,105,Tue
+6156,Hartford,CT,4,878,Fri/Mon/Tue/Wed
+6183,Hartford,CT,4,649,Mon/Tue
+6241,Dayville,CT,1,102,Mon
+6269,Storrs Mansfield,CT,3,524,Mon/Wed
+6320,New London,CT,8,2184,Fri/Mon/Thu/Tue
+6340,Groton,CT,6,1135,Fri/Mon/Thu/Tue
+6349,Groton,CT,1,81,Tue
+6415,Colchester,CT,1,213,Mon
+6451,Meriden,CT,1,225,Thu
+6457,Middletown,CT,4,715,Mon/Tue
+6484,Shelton,CT,1,572,Tue
+6492,Wallingford,CT,1,103,Thu
+6510,New Haven,CT,1,112,Thu
+6516,West Haven,CT,1,130,Wed
+6517,Hamden,CT,2,450,Mon/Wed
+6524,Bethany,CT,6,1144,Fri/Mon/Thu/Tue/Wed
+6615,Stratford,CT,2,368,Fri
+6810,Danbury,CT,1,261,Fri
+6814,Danbury,CT,3,564,Fri/Thu
+6824,Fairfield,CT,1,143,Fri
+6825,Fairfield,CT,1,127,Mon
+6830,Greenwich,CT,1,394,Tue
+6840,New Canaan,CT,1,195,Thu
+6851,Norwalk,CT,1,348,Thu
+6854,Norwalk,CT,3,638,Thu/Tue/Wed
+6870,Old Greenwich,CT,1,126,Fri
+6877,Ridgefield,CT,2,297,Fri/Thu
+6897,Wilton,CT,1,163,Mon
+6901,Stamford,CT,2,323,Fri/Wed
+6902,Stamford,CT,3,1321,Fri/Tue
+6903,Stamford,CT,1,197,Wed
+6927,Stamford,CT,4,573,Thu/Tue/Wed

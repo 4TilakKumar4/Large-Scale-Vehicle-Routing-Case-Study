@@ -1,0 +1,211 @@
+parameter,param_value,scenario,weekly_total,annual_total
+cost_per_mile_van,0.65,Base Case (CW+LS),28727.51,1493830.52
+cost_per_mile_van,0.65,Overnight (CW+LS),30583.75,1590355.0
+cost_per_mile_van,0.65,Mixed Fleet (Van+ST),31978.17,1662864.84
+cost_per_mile_van,0.65,ALNS,28521.87,1483137.24
+cost_per_mile_van,0.65,ALNS + Overnight,29420.41,1529861.32
+cost_per_mile_van,0.6833,Base Case (CW+LS),28990.99,1507531.48
+cost_per_mile_van,0.6833,Overnight (CW+LS),30843.09,1603840.68
+cost_per_mile_van,0.6833,Mixed Fleet (Van+ST),32158.31,1672232.12
+cost_per_mile_van,0.6833,ALNS,28783.34,1496733.68
+cost_per_mile_van,0.6833,ALNS + Overnight,29674.06,1543051.12
+cost_per_mile_van,0.7167,Base Case (CW+LS),29254.43,1521230.36
+cost_per_mile_van,0.7167,Overnight (CW+LS),31102.41,1617325.32
+cost_per_mile_van,0.7167,Mixed Fleet (Van+ST),32338.43,1681598.36
+cost_per_mile_van,0.7167,ALNS,29044.8,1510329.6
+cost_per_mile_van,0.7167,ALNS + Overnight,29927.76,1556243.52
+cost_per_mile_van,0.75,Base Case (CW+LS),29517.91,1534931.32
+cost_per_mile_van,0.75,Overnight (CW+LS),31361.75,1630811.0
+cost_per_mile_van,0.75,Mixed Fleet (Van+ST),32518.57,1690965.64
+cost_per_mile_van,0.75,ALNS,29306.27,1523926.04
+cost_per_mile_van,0.75,ALNS + Overnight,30181.41,1569433.32
+cost_per_mile_van,0.7833,Base Case (CW+LS),29781.39,1548632.28
+cost_per_mile_van,0.7833,Overnight (CW+LS),31621.09,1644296.68
+cost_per_mile_van,0.7833,Mixed Fleet (Van+ST),32698.71,1700332.92
+cost_per_mile_van,0.7833,ALNS,29567.74,1537522.48
+cost_per_mile_van,0.7833,ALNS + Overnight,30435.06,1582623.12
+cost_per_mile_van,0.8167,Base Case (CW+LS),30044.83,1562331.16
+cost_per_mile_van,0.8167,Overnight (CW+LS),31880.41,1657781.32
+cost_per_mile_van,0.8167,Mixed Fleet (Van+ST),32878.83,1709699.16
+cost_per_mile_van,0.8167,ALNS,29829.2,1551118.4
+cost_per_mile_van,0.8167,ALNS + Overnight,30688.76,1595815.52
+cost_per_mile_van,0.85,Base Case (CW+LS),30308.31,1576032.12
+cost_per_mile_van,0.85,Overnight (CW+LS),32139.75,1671267.0
+cost_per_mile_van,0.85,Mixed Fleet (Van+ST),33058.97,1719066.44
+cost_per_mile_van,0.85,ALNS,30090.67,1564714.84
+cost_per_mile_van,0.85,ALNS + Overnight,30942.41,1609005.32
+cost_per_mile_st,0.72,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.72,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.72,Mixed Fleet (Van+ST),32086.25,1668485.0
+cost_per_mile_st,0.72,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.72,ALNS + Overnight,29991.16,1559540.32
+cost_per_mile_st,0.7583,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.7583,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.7583,Mixed Fleet (Van+ST),32200.15,1674407.8
+cost_per_mile_st,0.7583,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.7583,ALNS + Overnight,29991.16,1559540.32
+cost_per_mile_st,0.7967,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.7967,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.7967,Mixed Fleet (Van+ST),32314.12,1680334.24
+cost_per_mile_st,0.7967,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.7967,ALNS + Overnight,29991.16,1559540.32
+cost_per_mile_st,0.835,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.835,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.835,Mixed Fleet (Van+ST),32428.01,1686256.52
+cost_per_mile_st,0.835,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.835,ALNS + Overnight,29991.16,1559540.32
+cost_per_mile_st,0.8733,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.8733,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.8733,Mixed Fleet (Van+ST),32541.94,1692180.88
+cost_per_mile_st,0.8733,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.8733,ALNS + Overnight,29991.16,1559540.32
+cost_per_mile_st,0.9117,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.9117,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.9117,Mixed Fleet (Van+ST),32655.9,1698106.8
+cost_per_mile_st,0.9117,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.9117,ALNS + Overnight,29991.16,1559540.32
+cost_per_mile_st,0.95,Base Case (CW+LS),29320.28,1524654.56
+cost_per_mile_st,0.95,Overnight (CW+LS),31167.22,1620695.44
+cost_per_mile_st,0.95,Mixed Fleet (Van+ST),32769.81,1704030.12
+cost_per_mile_st,0.95,ALNS,29110.14,1513727.28
+cost_per_mile_st,0.95,ALNS + Overnight,29991.16,1559540.32
+driver_hourly_wage,28.0,Base Case (CW+LS),27335.53,1421447.56
+driver_hourly_wage,28.0,Overnight (CW+LS),29090.38,1512699.76
+driver_hourly_wage,28.0,Mixed Fleet (Van+ST),30360.99,1578771.48
+driver_hourly_wage,28.0,ALNS,27116.1,1410037.2
+driver_hourly_wage,28.0,ALNS + Overnight,27965.79,1454221.08
+driver_hourly_wage,29.6667,Base Case (CW+LS),28162.57,1464453.64
+driver_hourly_wage,29.6667,Overnight (CW+LS),29955.76,1557699.52
+driver_hourly_wage,29.6667,Mixed Fleet (Van+ST),31203.74,1622594.48
+driver_hourly_wage,29.6667,ALNS,27947.0,1453244.0
+driver_hourly_wage,29.6667,ALNS + Overnight,28809.71,1498104.92
+driver_hourly_wage,31.3333,Base Case (CW+LS),28989.52,1507455.04
+driver_hourly_wage,31.3333,Overnight (CW+LS),30821.13,1602698.76
+driver_hourly_wage,31.3333,Mixed Fleet (Van+ST),32046.43,1666414.36
+driver_hourly_wage,31.3333,ALNS,28777.86,1496448.72
+driver_hourly_wage,31.3333,ALNS + Overnight,29653.68,1541991.36
+driver_hourly_wage,33.0,Base Case (CW+LS),29816.44,1550454.88
+driver_hourly_wage,33.0,Overnight (CW+LS),31686.43,1647694.36
+driver_hourly_wage,33.0,Mixed Fleet (Van+ST),32889.04,1710230.08
+driver_hourly_wage,33.0,ALNS,29608.66,1539650.32
+driver_hourly_wage,33.0,ALNS + Overnight,30497.5,1585870.0
+driver_hourly_wage,34.6667,Base Case (CW+LS),30643.36,1593454.72
+driver_hourly_wage,34.6667,Overnight (CW+LS),32551.7,1692688.4
+driver_hourly_wage,34.6667,Mixed Fleet (Van+ST),33731.66,1754046.32
+driver_hourly_wage,34.6667,ALNS,30439.42,1582849.84
+driver_hourly_wage,34.6667,ALNS + Overnight,31341.32,1629748.64
+driver_hourly_wage,36.3333,Base Case (CW+LS),31470.44,1636462.88
+driver_hourly_wage,36.3333,Overnight (CW+LS),33417.2,1737694.4
+driver_hourly_wage,36.3333,Mixed Fleet (Van+ST),34574.4,1797868.8
+driver_hourly_wage,36.3333,ALNS,31270.35,1626058.2
+driver_hourly_wage,36.3333,ALNS + Overnight,32185.32,1673636.64
+driver_hourly_wage,38.0,Base Case (CW+LS),32297.42,1679465.84
+driver_hourly_wage,38.0,Overnight (CW+LS),34282.49,1782689.48
+driver_hourly_wage,38.0,Mixed Fleet (Van+ST),35417.12,1841690.24
+driver_hourly_wage,38.0,ALNS,32101.19,1669261.88
+driver_hourly_wage,38.0,ALNS + Overnight,33029.2,1717518.4
+overnight_allowance,69.0,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,69.0,Overnight (CW+LS),31101.22,1617263.44
+overnight_allowance,69.0,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,69.0,ALNS,29110.14,1513727.28
+overnight_allowance,69.0,ALNS + Overnight,29947.16,1557252.32
+overnight_allowance,74.1667,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,74.1667,Overnight (CW+LS),31132.24,1618876.48
+overnight_allowance,74.1667,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,74.1667,ALNS,29110.14,1513727.28
+overnight_allowance,74.1667,ALNS + Overnight,29967.84,1558327.68
+overnight_allowance,79.3333,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,79.3333,Overnight (CW+LS),31163.2,1620486.4
+overnight_allowance,79.3333,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,79.3333,ALNS,29110.14,1513727.28
+overnight_allowance,79.3333,ALNS + Overnight,29988.48,1559400.96
+overnight_allowance,84.5,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,84.5,Overnight (CW+LS),31194.22,1622099.44
+overnight_allowance,84.5,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,84.5,ALNS,29110.14,1513727.28
+overnight_allowance,84.5,ALNS + Overnight,30009.16,1560476.32
+overnight_allowance,89.6667,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,89.6667,Overnight (CW+LS),31225.24,1623712.48
+overnight_allowance,89.6667,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,89.6667,ALNS,29110.14,1513727.28
+overnight_allowance,89.6667,ALNS + Overnight,30029.84,1561551.68
+overnight_allowance,94.8333,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,94.8333,Overnight (CW+LS),31256.2,1625322.4
+overnight_allowance,94.8333,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,94.8333,ALNS,29110.14,1513727.28
+overnight_allowance,94.8333,ALNS + Overnight,30050.48,1562624.96
+overnight_allowance,100.0,Base Case (CW+LS),29320.28,1524654.56
+overnight_allowance,100.0,Overnight (CW+LS),31287.22,1626935.44
+overnight_allowance,100.0,Mixed Fleet (Van+ST),32383.45,1683939.4
+overnight_allowance,100.0,ALNS,29110.14,1513727.28
+overnight_allowance,100.0,ALNS + Overnight,30071.16,1563700.32
+day_cab_daily,150.0,Base Case (CW+LS),28200.28,1466414.56
+day_cab_daily,150.0,Overnight (CW+LS),30047.22,1562455.44
+day_cab_daily,150.0,Mixed Fleet (Van+ST),31018.45,1612959.4
+day_cab_daily,150.0,ALNS,28025.14,1457307.28
+day_cab_daily,150.0,ALNS + Overnight,28906.16,1503120.32
+day_cab_daily,163.3333,Base Case (CW+LS),28626.84,1488595.68
+day_cab_daily,163.3333,Overnight (CW+LS),30473.78,1584636.56
+day_cab_daily,163.3333,Mixed Fleet (Van+ST),31538.32,1639992.64
+day_cab_daily,163.3333,ALNS,28438.37,1478795.24
+day_cab_daily,163.3333,ALNS + Overnight,29319.39,1524608.28
+day_cab_daily,176.6667,Base Case (CW+LS),29053.72,1510793.44
+day_cab_daily,176.6667,Overnight (CW+LS),30900.66,1606834.32
+day_cab_daily,176.6667,Mixed Fleet (Van+ST),32058.58,1667046.16
+day_cab_daily,176.6667,ALNS,28851.91,1500299.32
+day_cab_daily,176.6667,ALNS + Overnight,29732.93,1546112.36
+day_cab_daily,190.0,Base Case (CW+LS),29480.28,1532974.56
+day_cab_daily,190.0,Overnight (CW+LS),31327.22,1629015.44
+day_cab_daily,190.0,Mixed Fleet (Van+ST),32578.45,1694079.4
+day_cab_daily,190.0,ALNS,29265.14,1521787.28
+day_cab_daily,190.0,ALNS + Overnight,30146.16,1567600.32
+day_cab_daily,203.3333,Base Case (CW+LS),29906.84,1555155.68
+day_cab_daily,203.3333,Overnight (CW+LS),31753.78,1651196.56
+day_cab_daily,203.3333,Mixed Fleet (Van+ST),33098.32,1721112.64
+day_cab_daily,203.3333,ALNS,29678.37,1543275.24
+day_cab_daily,203.3333,ALNS + Overnight,30559.39,1589088.28
+day_cab_daily,216.6667,Base Case (CW+LS),30333.72,1577353.44
+day_cab_daily,216.6667,Overnight (CW+LS),32180.66,1673394.32
+day_cab_daily,216.6667,Mixed Fleet (Van+ST),33618.58,1748166.16
+day_cab_daily,216.6667,ALNS,30091.91,1564779.32
+day_cab_daily,216.6667,ALNS + Overnight,30972.93,1610592.36
+day_cab_daily,230.0,Base Case (CW+LS),30760.28,1599534.56
+day_cab_daily,230.0,Overnight (CW+LS),32607.22,1695575.44
+day_cab_daily,230.0,Mixed Fleet (Van+ST),34138.45,1775199.4
+day_cab_daily,230.0,ALNS,30505.14,1586267.28
+day_cab_daily,230.0,ALNS + Overnight,31386.16,1632080.32
+insurance_per_day,45.0,Base Case (CW+LS),28968.28,1506350.56
+insurance_per_day,45.0,Overnight (CW+LS),30815.22,1602391.44
+insurance_per_day,45.0,Mixed Fleet (Van+ST),31954.45,1661631.4
+insurance_per_day,45.0,ALNS,28769.14,1495995.28
+insurance_per_day,45.0,ALNS + Overnight,29650.16,1541808.32
+insurance_per_day,50.0,Base Case (CW+LS),29128.28,1514670.56
+insurance_per_day,50.0,Overnight (CW+LS),30975.22,1610711.44
+insurance_per_day,50.0,Mixed Fleet (Van+ST),32149.45,1671771.4
+insurance_per_day,50.0,ALNS,28924.14,1504055.28
+insurance_per_day,50.0,ALNS + Overnight,29805.16,1549868.32
+insurance_per_day,55.0,Base Case (CW+LS),29288.28,1522990.56
+insurance_per_day,55.0,Overnight (CW+LS),31135.22,1619031.44
+insurance_per_day,55.0,Mixed Fleet (Van+ST),32344.45,1681911.4
+insurance_per_day,55.0,ALNS,29079.14,1512115.28
+insurance_per_day,55.0,ALNS + Overnight,29960.16,1557928.32
+insurance_per_day,60.0,Base Case (CW+LS),29448.28,1531310.56
+insurance_per_day,60.0,Overnight (CW+LS),31295.22,1627351.44
+insurance_per_day,60.0,Mixed Fleet (Van+ST),32539.45,1692051.4
+insurance_per_day,60.0,ALNS,29234.14,1520175.28
+insurance_per_day,60.0,ALNS + Overnight,30115.16,1565988.32
+insurance_per_day,65.0,Base Case (CW+LS),29608.28,1539630.56
+insurance_per_day,65.0,Overnight (CW+LS),31455.22,1635671.44
+insurance_per_day,65.0,Mixed Fleet (Van+ST),32734.45,1702191.4
+insurance_per_day,65.0,ALNS,29389.14,1528235.28
+insurance_per_day,65.0,ALNS + Overnight,30270.16,1574048.32
+insurance_per_day,70.0,Base Case (CW+LS),29768.28,1547950.56
+insurance_per_day,70.0,Overnight (CW+LS),31615.22,1643991.44
+insurance_per_day,70.0,Mixed Fleet (Van+ST),32929.45,1712331.4
+insurance_per_day,70.0,ALNS,29544.14,1536295.28
+insurance_per_day,70.0,ALNS + Overnight,30425.16,1582108.32
+insurance_per_day,75.0,Base Case (CW+LS),29928.28,1556270.56
+insurance_per_day,75.0,Overnight (CW+LS),31775.22,1652311.44
+insurance_per_day,75.0,Mixed Fleet (Van+ST),33124.45,1722471.4
+insurance_per_day,75.0,ALNS,29699.14,1544355.28
+insurance_per_day,75.0,ALNS + Overnight,30580.16,1590168.32

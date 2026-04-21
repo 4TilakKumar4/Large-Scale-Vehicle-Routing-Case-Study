@@ -1,0 +1,340 @@
+day,route_number,vehicle_type,stop_sequence,order_id,location,arrival_time,departure_time,delivery_volume_cuft
+Mon,1,Van,0,0,DC (Wilmington),,07:36,
+Mon,1,Van,1,23,Charlestown,08:00,08:50,1676.0
+Mon,1,Van,2,175,Burlington,14:13,14:43,160.0
+Mon,1,Van,3,258,Burlington,14:43,15:13,165.0
+Mon,1,Van,4,0,DC (Wilmington),20:14,,
+Mon,2,Van,0,0,DC (Wilmington),,05:12,
+Mon,2,Van,1,104,Hartford,08:00,08:30,124.0
+Mon,2,Van,2,14,Farmington,08:45,09:29,1479.0
+Mon,2,Van,3,241,Bethany,10:14,10:44,153.0
+Mon,2,Van,4,85,Fairfield,11:26,11:56,127.0
+Mon,2,Van,5,87,Wilton,12:17,12:47,163.0
+Mon,2,Van,6,250,Hamden,13:44,14:14,167.0
+Mon,2,Van,7,109,Middletown,14:49,15:19,198.0
+Mon,2,Van,8,128,Middletown,15:19,15:49,204.0
+Mon,2,Van,9,0,DC (Wilmington),18:59,,
+Mon,3,Van,0,0,DC (Wilmington),,06:55,
+Mon,3,Van,1,201,Marlborough,08:00,08:30,124.0
+Mon,3,Van,2,20,Westborough,08:45,09:15,111.0
+Mon,3,Van,3,67,Dayville,10:18,10:48,102.0
+Mon,3,Van,4,207,Groton,12:03,12:33,145.0
+Mon,3,Van,5,237,Groton,12:33,13:03,148.0
+Mon,3,Van,6,76,New London,13:11,13:41,631.0
+Mon,3,Van,7,120,New London,13:41,14:11,124.0
+Mon,3,Van,8,40,Colchester,14:47,15:17,213.0
+Mon,3,Van,9,180,Bolton,15:43,16:14,159.0
+Mon,3,Van,10,155,Manchester,16:22,16:52,184.0
+Mon,3,Van,11,217,Storrs Mansfield,17:18,17:48,220.0
+Mon,3,Van,12,0,DC (Wilmington),20:09,,
+Mon,4,StraightTruck,0,0,DC (Wilmington),,05:18,
+Mon,4,StraightTruck,1,45,East Hartford,08:00,08:30,242.0
+Mon,4,StraightTruck,2,223,Hartford,08:36,09:06,144.0
+Mon,4,StraightTruck,3,152,Hartford,09:06,09:36,211.0
+Mon,4,StraightTruck,4,58,Hartford,09:36,10:06,183.0
+Mon,4,StraightTruck,5,80,Hartford,10:08,10:38,110.0
+Mon,4,StraightTruck,6,192,Hartford,10:39,11:09,127.0
+Mon,4,StraightTruck,7,15,Windsor,11:22,11:52,157.0
+Mon,4,StraightTruck,8,168,Windsor Locks,12:00,12:30,170.0
+Mon,4,StraightTruck,9,0,DC (Wilmington),15:22,,
+Mon,5,StraightTruck,0,0,DC (Wilmington),,07:33,
+Mon,5,StraightTruck,1,209,Boston,08:00,08:30,246.0
+Mon,5,StraightTruck,2,244,Boston,08:33,09:03,163.0
+Mon,5,StraightTruck,3,28,Boston,09:06,09:36,85.0
+Mon,5,StraightTruck,4,70,Boston,09:36,10:06,200.0
+Mon,5,StraightTruck,5,255,Charlestown,10:09,10:39,120.0
+Mon,5,StraightTruck,6,0,DC (Wilmington),11:03,,
+Mon,6,StraightTruck,0,0,DC (Wilmington),,07:48,
+Mon,6,StraightTruck,1,251,Billerica,08:00,08:30,146.0
+Mon,6,StraightTruck,2,32,Weston,08:56,09:26,152.0
+Mon,6,StraightTruck,3,188,Weston,09:26,09:56,127.0
+Mon,6,StraightTruck,4,117,Auburndale,10:03,10:33,161.0
+Mon,6,StraightTruck,5,90,West Roxbury,10:47,11:17,187.0
+Mon,6,StraightTruck,6,178,Brighton,11:26,11:56,165.0
+Mon,6,StraightTruck,7,162,Boston,12:05,12:35,106.0
+Mon,6,StraightTruck,8,132,North Berwick,14:33,15:03,244.0
+Mon,6,StraightTruck,9,0,DC (Wilmington),16:49,,
+Tue,1,Van,0,0,DC (Wilmington),,08:00,
+Tue,1,Van,1,7,Wilmington,08:00,08:30,491.0
+Tue,1,Van,2,0,DC (Wilmington),08:30,,
+Tue,2,Van,0,0,DC (Wilmington),,04:43,
+Tue,2,Van,1,39,West Hartland,08:00,08:30,257.0
+Tue,2,Van,2,52,Farmington,09:08,09:38,180.0
+Tue,2,Van,3,74,Bethany,10:22,10:52,210.0
+Tue,2,Van,4,57,Middletown,11:33,12:03,180.0
+Tue,2,Van,5,150,Middletown,12:03,12:33,133.0
+Tue,2,Van,6,50,Glastonbury,13:03,13:33,131.0
+Tue,2,Van,7,121,Glastonbury,13:33,14:03,243.0
+Tue,2,Van,8,88,Manchester,14:11,14:41,131.0
+Tue,2,Van,9,176,Bedford,17:09,17:39,226.0
+Tue,2,Van,10,0,DC (Wilmington),18:00,,
+Tue,3,Van,0,0,DC (Wilmington),,04:05,
+Tue,3,Van,1,105,Shelton,08:00,08:30,572.0
+Tue,3,Van,2,60,Norwalk,09:09,09:39,110.0
+Tue,3,Van,3,153,Stamford,09:54,10:24,149.0
+Tue,3,Van,4,224,Stamford,10:24,10:54,276.0
+Tue,3,Van,5,18,Greenwich,11:05,11:35,394.0
+Tue,3,Van,6,107,Stamford,11:50,12:20,106.0
+Tue,3,Van,7,125,Stamford,12:20,12:50,182.0
+Tue,3,Van,8,0,DC (Wilmington),17:29,,
+Tue,4,Van,0,0,DC (Wilmington),,06:35,
+Tue,4,Van,1,234,Dover,08:00,08:30,237.0
+Tue,4,Van,2,181,Parsonsfield,09:45,10:15,243.0
+Tue,4,Van,3,182,Rumford,12:17,12:47,140.0
+Tue,4,Van,4,66,Wenham,16:44,17:14,197.0
+Tue,4,Van,5,0,DC (Wilmington),17:50,,
+Tue,5,StraightTruck,0,0,DC (Wilmington),,07:30,
+Tue,5,StraightTruck,1,8,Lynn,08:00,08:30,100.0
+Tue,5,StraightTruck,2,92,Boston,08:47,09:17,226.0
+Tue,5,StraightTruck,3,122,Boston,09:20,09:50,283.0
+Tue,5,StraightTruck,4,33,Boston,09:50,10:20,247.0
+Tue,5,StraightTruck,5,51,Boston,10:20,10:50,135.0
+Tue,5,StraightTruck,6,72,Boston,10:53,11:23,199.0
+Tue,5,StraightTruck,7,140,Boston,11:23,11:53,136.0
+Tue,5,StraightTruck,8,0,DC (Wilmington),12:18,,
+Tue,6,StraightTruck,0,0,DC (Wilmington),,07:30,
+Tue,6,StraightTruck,1,42,Boston,08:00,08:30,135.0
+Tue,6,StraightTruck,2,163,Cambridge,08:33,09:03,119.0
+Tue,6,StraightTruck,3,9,Cambridge,09:03,09:33,182.0
+Tue,6,StraightTruck,4,10,Boston,09:38,10:08,203.0
+Tue,6,StraightTruck,5,34,Boston,10:08,10:38,301.0
+Tue,6,StraightTruck,6,186,Cambridge,10:42,11:12,131.0
+Tue,6,StraightTruck,7,71,Cambridge,11:13,11:43,164.0
+Tue,6,StraightTruck,8,239,Cambridge,11:43,12:13,122.0
+Tue,6,StraightTruck,9,0,DC (Wilmington),12:40,,
+Tue,7,StraightTruck,0,0,DC (Wilmington),,04:55,
+Tue,7,StraightTruck,1,68,Groton,08:00,08:30,81.0
+Tue,7,StraightTruck,2,243,New London,08:41,09:11,89.0
+Tue,7,StraightTruck,3,49,New London,09:11,09:41,256.0
+Tue,7,StraightTruck,4,101,New London,09:41,10:11,103.0
+Tue,7,StraightTruck,5,29,Groton,10:18,10:48,199.0
+Tue,7,StraightTruck,6,221,Chestnut Hill,13:18,13:48,143.0
+Tue,7,StraightTruck,7,26,Wellesley Hills,13:59,14:29,409.0
+Tue,7,StraightTruck,8,212,Weston,14:36,15:06,114.0
+Tue,7,StraightTruck,9,0,DC (Wilmington),15:39,,
+Tue,8,StraightTruck,0,0,DC (Wilmington),,07:35,
+Tue,8,StraightTruck,1,187,Cambridge,08:00,08:30,143.0
+Tue,8,StraightTruck,2,211,Cambridge,08:30,09:00,141.0
+Tue,8,StraightTruck,3,78,Billerica,09:30,10:00,146.0
+Tue,8,StraightTruck,4,108,Billerica,10:00,10:30,261.0
+Tue,8,StraightTruck,5,146,Hanover,13:28,13:58,189.0
+Tue,8,StraightTruck,6,4,North Andover,16:48,17:18,111.0
+Tue,8,StraightTruck,7,22,North Andover,17:18,17:48,286.0
+Tue,8,StraightTruck,8,0,DC (Wilmington),18:04,,
+Tue,9,StraightTruck,0,0,DC (Wilmington),,05:13,
+Tue,9,StraightTruck,1,254,Hartford,08:00,08:30,111.0
+Tue,9,StraightTruck,2,148,Hartford,08:33,09:03,496.0
+Tue,9,StraightTruck,3,216,Hartford,09:05,09:35,263.0
+Tue,9,StraightTruck,4,235,Hartford,09:35,10:05,105.0
+Tue,9,StraightTruck,5,177,Hartford,10:09,10:39,164.0
+Tue,9,StraightTruck,6,133,Enfield,11:15,11:45,121.0
+Tue,9,StraightTruck,7,179,Enfield,11:45,12:15,135.0
+Tue,9,StraightTruck,8,0,DC (Wilmington),15:00,,
+Wed,1,Van,0,0,DC (Wilmington),,07:47,
+Wed,1,Van,1,1,Woburn,08:00,08:30,333.0
+Wed,1,Van,2,37,Woburn,08:30,09:00,128.0
+Wed,1,Van,3,0,DC (Wilmington),09:13,,
+Wed,2,Van,0,0,DC (Wilmington),,07:51,
+Wed,2,Van,1,6,Tewksbury,08:00,09:21,2699.0
+Wed,2,Van,2,138,Lowell,09:34,10:04,159.0
+Wed,2,Van,3,135,Tewksbury,10:18,10:48,101.0
+Wed,2,Van,4,0,DC (Wilmington),10:57,,
+Wed,3,Van,0,0,DC (Wilmington),,07:35,
+Wed,3,Van,1,43,Boston,08:00,08:30,152.0
+Wed,3,Van,2,73,Boston,08:32,09:02,120.0
+Wed,3,Van,3,24,Rockland,09:33,10:35,2077.0
+Wed,3,Van,4,139,Duxbury,10:59,11:29,176.0
+Wed,3,Van,5,38,Medford,12:28,12:58,143.0
+Wed,3,Van,6,173,Medford,12:58,13:28,96.0
+Wed,3,Van,7,0,DC (Wilmington),13:46,,
+Wed,4,Van,0,0,DC (Wilmington),,04:24,
+Wed,4,Van,1,54,Hamden,08:00,08:30,283.0
+Wed,4,Van,2,261,West Haven,08:43,09:13,130.0
+Wed,4,Van,3,171,Norwalk,10:00,10:30,376.0
+Wed,4,Van,4,257,Stamford,10:45,11:15,235.0
+Wed,4,Van,5,53,Stamford,11:26,11:56,112.0
+Wed,4,Van,6,156,Stamford,11:59,12:29,197.0
+Wed,4,Van,7,48,Bethany,13:39,14:09,396.0
+Wed,4,Van,8,115,Plainville,14:45,15:15,286.0
+Wed,4,Van,9,0,DC (Wilmington),18:22,,
+Wed,5,Van,0,0,DC (Wilmington),,06:55,
+Wed,5,Van,1,116,Marlborough,08:00,08:30,164.0
+Wed,5,Van,2,200,Worcester,08:58,09:28,159.0
+Wed,5,Van,3,65,Smithfield,10:27,10:57,212.0
+Wed,5,Van,4,62,Providence,11:12,11:42,241.0
+Wed,5,Van,5,12,East Providence,11:46,12:16,608.0
+Wed,5,Van,6,27,East Providence,12:16,13:04,1594.0
+Wed,5,Van,7,0,DC (Wilmington),14:51,,
+Wed,6,Van,0,0,DC (Wilmington),,05:48,
+Wed,6,Van,1,205,Newport,08:00,08:30,366.0
+Wed,6,Van,2,233,Exeter,09:02,09:32,151.0
+Wed,6,Van,3,106,Storrs Mansfield,10:45,11:15,186.0
+Wed,6,Van,4,193,Storrs Mansfield,11:15,11:45,118.0
+Wed,6,Van,5,81,Springfield,12:57,13:27,140.0
+Wed,6,Van,6,231,Northampton,13:55,14:25,151.0
+Wed,6,Van,7,13,Keene,15:57,16:27,117.0
+Wed,6,Van,8,225,Keene,16:27,16:57,129.0
+Wed,6,Van,9,0,DC (Wilmington),19:08,,
+Wed,7,StraightTruck,0,0,DC (Wilmington),,07:13,
+Wed,7,StraightTruck,1,149,Framingham,08:00,08:30,137.0
+Wed,7,StraightTruck,2,260,Brighton,08:57,09:27,132.0
+Wed,7,StraightTruck,3,158,Boston,09:36,10:06,170.0
+Wed,7,StraightTruck,4,91,Boston,10:06,10:36,250.0
+Wed,7,StraightTruck,5,77,Boston,10:42,11:12,157.0
+Wed,7,StraightTruck,6,96,Boston,11:15,11:45,106.0
+Wed,7,StraightTruck,7,240,Boston,11:45,12:15,174.0
+Wed,7,StraightTruck,8,206,Boston,12:17,12:47,176.0
+Wed,7,StraightTruck,9,0,DC (Wilmington),13:12,,
+Wed,8,StraightTruck,0,0,DC (Wilmington),,05:08,
+Wed,8,StraightTruck,1,55,Windsor Locks,08:00,08:30,112.0
+Wed,8,StraightTruck,2,220,Windsor Locks,08:30,09:00,98.0
+Wed,8,StraightTruck,3,253,Windsor,09:08,09:38,94.0
+Wed,8,StraightTruck,4,35,Hartford,09:52,10:22,236.0
+Wed,8,StraightTruck,5,248,Hartford,10:24,10:54,149.0
+Wed,8,StraightTruck,6,123,Farmington,11:09,11:39,151.0
+Wed,8,StraightTruck,7,246,Farmington,11:39,12:09,129.0
+Wed,8,StraightTruck,8,167,Glastonbury,12:38,13:08,140.0
+Wed,8,StraightTruck,9,238,East Hartford,13:21,13:51,246.0
+Wed,8,StraightTruck,10,0,DC (Wilmington),16:33,,
+Thu,1,Van,0,0,DC (Wilmington),,07:51,
+Thu,1,Van,1,5,Reading,08:00,08:30,206.0
+Thu,1,Van,2,25,Waltham,08:56,10:14,2614.0
+Thu,1,Van,3,0,DC (Wilmington),10:42,,
+Thu,2,Van,0,0,DC (Wilmington),,07:48,
+Thu,2,Van,1,21,Billerica,08:00,08:42,1396.0
+Thu,2,Van,2,113,Westford,09:04,09:34,163.0
+Thu,2,Van,3,195,Merrimack,10:09,10:39,319.0
+Thu,2,Van,4,199,Manchester,10:57,11:27,197.0
+Thu,2,Van,5,136,Manchester,11:34,12:04,257.0
+Thu,2,Van,6,56,Manchester,12:10,12:40,94.0
+Thu,2,Van,7,86,Lebanon,14:28,14:58,193.0
+Thu,2,Van,8,194,Hanover,15:21,15:51,112.0
+Thu,2,Van,9,218,Hanover,15:51,16:21,193.0
+Thu,2,Van,10,0,DC (Wilmington),19:13,,
+Thu,3,Van,0,0,DC (Wilmington),,04:21,
+Thu,3,Van,1,119,Bethany,08:00,08:30,138.0
+Thu,3,Van,2,197,Norwalk,09:27,09:57,348.0
+Thu,3,Van,3,256,Norwalk,10:03,10:33,152.0
+Thu,3,Van,4,137,New Canaan,10:46,11:16,195.0
+Thu,3,Van,5,147,Stamford,11:30,12:00,173.0
+Thu,3,Van,6,227,Ridgefield,12:22,12:52,125.0
+Thu,3,Van,7,214,Danbury,13:03,13:33,251.0
+Thu,3,Van,8,247,Danbury,13:33,14:03,166.0
+Thu,3,Van,9,0,DC (Wilmington),18:19,,
+Thu,4,StraightTruck,0,0,DC (Wilmington),,04:43,
+Thu,4,StraightTruck,1,134,Meriden,08:00,08:30,225.0
+Thu,4,StraightTruck,2,61,Wallingford,08:43,09:13,103.0
+Thu,4,StraightTruck,3,63,New Haven,09:36,10:06,112.0
+Thu,4,StraightTruck,4,166,New London,11:17,11:47,474.0
+Thu,4,StraightTruck,5,93,Groton,11:54,12:24,219.0
+Thu,4,StraightTruck,6,160,Groton,12:24,12:54,260.0
+Thu,4,StraightTruck,7,0,DC (Wilmington),15:56,,
+Thu,5,StraightTruck,0,0,DC (Wilmington),,07:27,
+Thu,5,StraightTruck,1,142,Weston,08:00,08:30,195.0
+Thu,5,StraightTruck,2,75,Weston,08:30,09:00,122.0
+Thu,5,StraightTruck,3,100,Weston,09:00,09:30,265.0
+Thu,5,StraightTruck,4,222,Portland,12:26,12:56,105.0
+Thu,5,StraightTruck,5,151,Portland,12:56,13:26,105.0
+Thu,5,StraightTruck,6,170,Portland,13:26,13:56,188.0
+Thu,5,StraightTruck,7,84,Westbrook,14:06,14:36,175.0
+Thu,5,StraightTruck,8,0,DC (Wilmington),17:06,,
+Thu,6,StraightTruck,0,0,DC (Wilmington),,06:36,
+Thu,6,StraightTruck,1,154,Norton,08:00,08:30,345.0
+Thu,6,StraightTruck,2,259,North Dartmouth,09:28,09:58,131.0
+Thu,6,StraightTruck,3,102,Glastonbury,12:38,13:08,168.0
+Thu,6,StraightTruck,4,36,Hartford,13:19,13:49,102.0
+Thu,6,StraightTruck,5,127,Hartford,13:52,14:22,127.0
+Thu,6,StraightTruck,6,229,Marlborough,16:26,16:56,180.0
+Thu,6,StraightTruck,7,219,Framingham,17:04,17:34,137.0
+Thu,6,StraightTruck,8,0,DC (Wilmington),18:21,,
+Thu,7,StraightTruck,0,0,DC (Wilmington),,07:43,
+Thu,7,StraightTruck,1,196,Winchester,08:00,08:30,250.0
+Thu,7,StraightTruck,2,99,Cambridge,08:39,09:09,172.0
+Thu,7,StraightTruck,3,46,Cambridge,09:15,09:45,137.0
+Thu,7,StraightTruck,4,95,Cambridge,09:45,10:15,114.0
+Thu,7,StraightTruck,5,202,Boston,10:18,10:48,121.0
+Thu,7,StraightTruck,6,141,Boston,10:50,11:20,123.0
+Thu,7,StraightTruck,7,185,Boston,11:20,11:50,158.0
+Thu,7,StraightTruck,8,159,Boston,11:51,12:21,119.0
+Thu,7,StraightTruck,9,184,Boston,12:21,12:51,153.0
+Thu,7,StraightTruck,10,0,DC (Wilmington),13:17,,
+Thu,8,StraightTruck,0,0,DC (Wilmington),,07:25,
+Thu,8,StraightTruck,1,215,Boston,08:00,08:30,178.0
+Thu,8,StraightTruck,2,124,Boston,08:30,09:00,160.0
+Thu,8,StraightTruck,3,190,Boston,09:00,09:30,140.0
+Thu,8,StraightTruck,4,131,Allston,09:33,10:03,142.0
+Thu,8,StraightTruck,5,97,Cambridge,10:05,10:35,203.0
+Thu,8,StraightTruck,6,210,Cambridge,10:35,11:05,401.0
+Thu,8,StraightTruck,7,31,Cambridge,11:06,11:36,173.0
+Thu,8,StraightTruck,8,0,DC (Wilmington),12:03,,
+Thu,9,StraightTruck,0,0,DC (Wilmington),,07:33,
+Thu,9,StraightTruck,1,245,Boston,08:00,08:30,227.0
+Thu,9,StraightTruck,2,189,Boston,08:30,09:00,123.0
+Thu,9,StraightTruck,3,103,Boston,09:00,09:30,130.0
+Thu,9,StraightTruck,4,183,Boston,09:33,10:03,203.0
+Thu,9,StraightTruck,5,69,Boston,10:03,10:33,141.0
+Thu,9,StraightTruck,6,118,Boston,10:33,11:03,117.0
+Thu,9,StraightTruck,7,79,Boston,11:05,11:35,148.0
+Thu,9,StraightTruck,8,232,Weymouth,11:59,12:29,146.0
+Thu,9,StraightTruck,9,0,DC (Wilmington),13:18,,
+Fri,1,Van,0,0,DC (Wilmington),,07:43,
+Fri,1,Van,1,3,Lawrence,08:00,08:30,903.0
+Fri,1,Van,2,110,Portland,10:45,11:15,177.0
+Fri,1,Van,3,252,Salem,13:38,14:08,181.0
+Fri,1,Van,4,230,Reading,14:27,14:57,132.0
+Fri,1,Van,5,2,Billerica,15:12,15:42,556.0
+Fri,1,Van,6,0,DC (Wilmington),15:54,,
+Fri,2,Van,0,0,DC (Wilmington),,07:27,
+Fri,2,Van,1,11,Weston,08:00,09:35,3153.0
+Fri,2,Van,2,0,DC (Wilmington),10:08,,
+Fri,3,Van,0,0,DC (Wilmington),,05:13,
+Fri,3,Van,1,145,Hartford,08:00,08:30,122.0
+Fri,3,Van,2,16,Hartford,08:32,09:02,255.0
+Fri,3,Van,3,204,New Britain,09:20,09:50,423.0
+Fri,3,Van,4,112,Stratford,11:00,11:30,181.0
+Fri,3,Van,5,226,Stratford,11:30,12:00,187.0
+Fri,3,Van,6,98,Bethany,12:36,13:06,98.0
+Fri,3,Van,7,164,Bethany,13:06,13:36,149.0
+Fri,3,Van,8,213,Farmington,14:21,14:51,154.0
+Fri,3,Van,9,41,Granby,15:18,15:48,163.0
+Fri,3,Van,10,0,DC (Wilmington),18:56,,
+Fri,4,Van,0,0,DC (Wilmington),,03:51,
+Fri,4,Van,1,64,Fairfield,08:00,08:30,143.0
+Fri,4,Van,2,129,Stamford,08:57,09:27,88.0
+Fri,4,Van,3,157,Old Greenwich,09:31,10:01,126.0
+Fri,4,Van,4,19,Stamford,10:06,10:36,896.0
+Fri,4,Van,5,83,Ridgefield,11:12,11:42,172.0
+Fri,4,Van,6,172,Danbury,11:52,12:22,261.0
+Fri,4,Van,7,144,Danbury,12:27,12:57,147.0
+Fri,4,Van,8,111,New Britain,14:15,14:45,186.0
+Fri,4,Van,9,0,DC (Wilmington),17:49,,
+Fri,5,Van,0,0,DC (Wilmington),,07:13,
+Fri,5,Van,1,249,Framingham,08:00,08:30,106.0
+Fri,5,Van,2,228,Southborough,08:42,09:12,119.0
+Fri,5,Van,3,198,Westborough,09:22,09:52,102.0
+Fri,5,Van,4,130,Webster,10:32,11:02,336.0
+Fri,5,Van,5,143,New London,12:28,12:58,164.0
+Fri,5,Van,6,17,New London,12:58,13:28,343.0
+Fri,5,Van,7,44,Groton,13:36,14:06,164.0
+Fri,5,Van,8,161,East Hartford,15:32,16:01,237.0
+Fri,5,Van,9,30,East Hartford,16:01,16:31,205.0
+Fri,5,Van,10,94,East Hartford,16:31,17:01,150.0
+Fri,5,Van,11,114,Tolland,17:28,17:58,78.0
+Fri,5,Van,12,0,DC (Wilmington),20:21,,
+Fri,6,StraightTruck,0,0,DC (Wilmington),,07:02,
+Fri,6,StraightTruck,1,89,Clinton,08:00,08:30,390.0
+Fri,6,StraightTruck,2,203,Fitchburg,08:56,09:26,444.0
+Fri,6,StraightTruck,3,191,Waltham,10:21,10:51,131.0
+Fri,6,StraightTruck,4,165,Weston,10:57,11:27,128.0
+Fri,6,StraightTruck,5,174,Waltham,11:33,12:03,182.0
+Fri,6,StraightTruck,6,242,Cambridge,12:15,12:45,109.0
+Fri,6,StraightTruck,7,0,DC (Wilmington),13:11,,
+Fri,7,StraightTruck,0,0,DC (Wilmington),,07:47,
+Fri,7,StraightTruck,1,126,Woburn,08:00,08:30,195.0
+Fri,7,StraightTruck,2,47,Boston,08:48,09:18,121.0
+Fri,7,StraightTruck,3,82,Boston,09:21,09:51,161.0
+Fri,7,StraightTruck,4,169,Boston,09:53,10:23,202.0
+Fri,7,StraightTruck,5,236,Boston,10:24,10:54,221.0
+Fri,7,StraightTruck,6,208,Boston,10:59,11:29,140.0
+Fri,7,StraightTruck,7,59,Charlestown,11:32,12:02,187.0
+Fri,7,StraightTruck,8,0,DC (Wilmington),12:26,,
