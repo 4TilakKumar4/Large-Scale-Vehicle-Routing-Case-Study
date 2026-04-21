@@ -161,9 +161,22 @@ class ORToolsSolver:
         )
         timeDim = routing.GetDimensionOrDie("Time")
 
-        # Pin every store node to the delivery window; depot is unconstrained.
+        # Pin every store node to the delivery window.
+        # Upper bound is tightened by each node's service time so that
+        # endOfService (arrival + service) never exceeds _CLOSE_MIN — matching
+        # evaluateRoute()'s `endOfService <= WINDOW_CLOSE` check.
+        # Without this, the last stop on any route can arrive at 17:59, spend
+        # 45 min unloading, and OR-Tools considers it feasible while
+        # evaluateRoute() correctly rejects it.
         for i in range(1, n + 1):
-            timeDim.CumulVar(manager.NodeToIndex(i)).SetRange(_OPEN_MIN, _CLOSE_MIN)
+            upperBound = max(_OPEN_MIN, _CLOSE_MIN - serviceMin[i])
+            timeDim.CumulVar(manager.NodeToIndex(i)).SetRange(_OPEN_MIN, upperBound)
+
+        # Depot departure: no later than window open. Drivers leave early enough
+        # to arrive at the first stop at 08:00, mirroring evaluateRoute()'s
+        # dispatchTime = max(0, WINDOW_OPEN - firstDrive).
+        for v in range(numVehicles):
+            timeDim.CumulVar(routing.Start(v)).SetRange(0, _OPEN_MIN)
 
         # ── drive-time dimension (travel only) ──────────────────────────
         # Reuses distCbIdx so only pure driving accumulates — service time
